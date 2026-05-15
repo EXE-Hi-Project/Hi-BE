@@ -1,0 +1,38 @@
+name: Deploy → EC2
+
+on:
+  push:
+    branches: [deploy]
+
+jobs:
+  deploy:
+    name: SSH Deploy to EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            echo "📦 Pulling latest code..."
+            cd ~/hi-app
+            git fetch origin deploy
+            git reset --hard origin/deploy
+
+            echo "📥 Installing dependencies..."
+            npm ci --omit=dev
+
+            echo "♻️  Restarting PM2..."
+            pm2 restart hi-api --update-env
+
+            echo "✅ Health check..."
+            sleep 3
+            curl -f http://localhost:5000/health || (echo "❌ Health check failed!" && exit 1)
+
+            echo "🎉 Deploy BE hoàn tất!"
