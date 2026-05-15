@@ -20,10 +20,14 @@ jobs:
           port: 22
           script: |
             set -e
-            echo "📦 Pulling latest code..."
+            echo "📦 Checking repo..."
+            if [ ! -d ~/hi-app/.git ]; then
+              git clone https://github.com/EXE-Hi-Project/Hi-BE.git ~/hi-app
+            fi
             cd ~/hi-app
-            git fetch origin deploy
-            git reset --hard origin/deploy
+            git remote set-url origin https://github.com/EXE-Hi-Project/Hi-BE.git
+            git fetch origin main
+            git reset --hard origin/main
 
             echo "📥 Installing dependencies..."
             npm ci --omit=dev
