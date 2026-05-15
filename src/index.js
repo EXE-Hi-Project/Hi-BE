@@ -16,6 +16,8 @@ app.use(helmet({ crossOriginOpenerPolicy: { policy: 'unsafe-none' }, crossOrigin
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
+  'https://hilover.space',
+  'https://www.hilover.space',
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 app.use(cors({
