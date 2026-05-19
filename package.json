@@ -6,6 +6,8 @@
 	"scripts": {
 		"dev": "nodemon src/index.js",
 		"start": "node src/index.js",
+		"check:syntax": "node scripts/check-syntax.mjs",
+		"build": "npm run check:syntax",
 		"migrate:roles": "node src/scripts/migrateUserRoles.js",
 		"rag:ingest": "node src/rag/ingest.js"
 	},

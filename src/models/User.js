@@ -3,8 +3,15 @@ const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
-  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  password: { type: String, minlength: 6 },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true,
+    trim: true,
+    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Email không hợp lệ'],
+  },
+  password: { type: String, minlength: 8 },
   authProvider: { type: String, enum: ['local', 'google', 'facebook'], default: 'local' },
   googleId: { type: String, sparse: true },
   facebookId: { type: String, sparse: true },
