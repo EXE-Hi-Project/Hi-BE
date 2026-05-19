@@ -13,16 +13,31 @@ connectDB();
 
 // Middleware
 app.use(helmet({ crossOriginOpenerPolicy: { policy: 'unsafe-none' }, crossOriginEmbedderPolicy: false }));
+
+const parseOrigins = (value = '') =>
+  value
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
   'https://hilover.space',
   'https://www.hilover.space',
-  process.env.FRONTEND_URL,
+  ...parseOrigins(process.env.FRONTEND_URL),
+  ...parseOrigins(process.env.FRONTEND_URLS),
 ].filter(Boolean);
+
+const allowVercelPreview = process.env.ALLOW_VERCEL_PREVIEW === 'true';
+const isAllowedOrigin = (origin) => {
+  if (!origin || allowedOrigins.includes(origin)) return true;
+  return allowVercelPreview && /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin);
+};
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
