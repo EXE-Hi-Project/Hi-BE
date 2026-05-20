@@ -1,0 +1,76 @@
+package com.hi.api.model;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.mongodb.core.index.Indexed;
+import org.springframework.data.mongodb.core.mapping.Document;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+
+@Data
+@NoArgsConstructor
+@Document(collection = "users")
+public class User {
+
+    @Id
+    @JsonProperty("_id")
+    private String id;
+
+    private String name;
+
+    @Indexed(unique = true)
+    private String email;
+
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    private String password;
+
+    private String authProvider = "local";
+    private String googleId;
+    private String facebookId;
+
+    private String role = "user";
+    private String gender;
+    private String avatar = "";
+
+    // Onboarding
+    private String birthDate;
+    private Double height;
+    private Double weight;
+    private List<String> interests = new ArrayList<>();
+    private List<String> goals = new ArrayList<>();
+    private Integer defaultCycleLength = 28;
+    private Integer defaultPeriodLength = 5;
+    private String lastPeriodDate;
+    private String lastPeriodEndDate;
+    private Boolean irregularCycle = false;
+
+    // Partner
+    private String partnerId;
+
+    @Indexed(unique = true, sparse = true)
+    private String partnerCode;
+
+    // AI preferences
+    private String aiPersonality = "friendly";
+    private String aiTone = "warm";
+
+    // Notification settings
+    private Boolean periodReminder = true;
+    private Integer reminderDaysBefore = 3;
+    private Boolean partnerNotifications = true;
+
+    // Onboarding
+    private Boolean onboardingCompleted = false;
+
+    @CreatedDate
+    private Instant createdAt;
+
+    @LastModifiedDate
+    private Instant updatedAt;
+}

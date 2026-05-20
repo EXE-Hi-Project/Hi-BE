@@ -1,0 +1,13 @@
+{
+  "name": "@hi/api-java",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hi API - Java Spring Boot backend",
+  "scripts": {
+    "dev": "mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local",
+    "build": "mvnw.cmd clean package -DskipTests",
+    "start": "java -jar target/hi-api-1.0.0.jar --spring.profiles.active=local",
+    "test": "mvnw.cmd test",
+    "clean": "mvnw.cmd clean"
+  }
+}
