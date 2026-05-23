@@ -59,7 +59,11 @@ public class UserController {
 
     @GetMapping("/partner-cycles")
     public ResponseEntity<Map<String, Object>> getPartnerCycles(@AuthenticationPrincipal User user) {
-        List<Cycle> cycles = userService.getPartnerCycles(user.getId());
-        return ResponseEntity.ok(Map.of("success", true, "cycles", cycles));
+        Map<String, Object> partnerData = userService.getPartnerData(user.getId());
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", true);
+        response.put("partner", partnerData.get("partner"));
+        response.put("cycles", partnerData.get("cycles"));
+        return ResponseEntity.ok(response);
     }
 }

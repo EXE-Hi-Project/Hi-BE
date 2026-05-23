@@ -37,4 +37,12 @@ public class NotificationService {
             notificationRepository.save(n);
         });
     }
+    public void createNotification(String userId, String type, String title, String message) {
+        Notification notification = new Notification();
+        notification.setUserId(userId);
+        notification.setType(type);
+        notification.setTitle(title);
+        notification.setMessage(message);
+        notificationRepository.save(notification);
+    }
 }

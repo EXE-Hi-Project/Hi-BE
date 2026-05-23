@@ -90,10 +90,7 @@ public class AuthController {
 
     @PostMapping("/forgot-password")
     public ResponseEntity<Map<String, Object>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
-        // Gọi service xử lý.
-        // Luôn trả về message chung theo Rule 4 trong ảnh để bảo mật email
         authService.forgotPassword(req);
-
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
         response.put("message", "Nếu email của bạn tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi đi.");
@@ -106,7 +103,6 @@ public class AuthController {
             @Valid @RequestBody ResetPasswordRequest req) {
         try {
             authService.resetPassword(token, req);
-
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
             response.put("message", "Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.");
