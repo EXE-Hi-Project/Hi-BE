@@ -4,6 +4,7 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
+import com.google.common.hash.Hashing;
 import com.hi.api.dto.request.*;
 import com.hi.api.model.PasswordResetToken;
 import com.hi.api.model.User;
@@ -15,13 +16,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 
 @Service
 public class AuthService {
@@ -47,6 +45,12 @@ public class AuthService {
         this.jwtUtil = jwtUtil;
         this.tokenRepository = tokenRepository;
         this.emailService = emailService;
+    }
+
+    private String hashToken(String plainToken) {
+        return Hashing.sha256()
+                .hashString(plainToken, StandardCharsets.UTF_8)
+                .toString();
     }
 
     private List<String> getAdminEmails() {
@@ -186,32 +190,56 @@ public class AuthService {
     }
     public void forgotPassword(ForgotPasswordRequest req) {
         String email = req.getEmail().trim().toLowerCase();
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản với email này"));
-        if (!"local".equals(user.getAuthProvider())) {
-            throw new IllegalArgumentException("Tài khoản này đăng nhập bằng " + user.getAuthProvider() + ". Không thể đổi mật khẩu.");
-        }
-        String otpCode = String.format("%06d", new Random().nextInt(999999));
-        PasswordResetToken resetToken = new PasswordResetToken();
-        resetToken.setUserId(user.getId());
-        resetToken.setTokenHash(otpCode);
-        resetToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES)); // Hết hạn sau 15p
-        tokenRepository.save(resetToken);
-        emailService.sendPasswordResetEmail(user.getEmail(), otpCode);
+
+        // Không throw Exception nếu không tìm thấy email (Bảo vệ thông tin User)
+        userRepository.findByEmail(email).ifPresent(user -> {
+
+            // Chỉ hỗ trợ tài khoản đăng nhập Local
+            if ("local".equals(user.getAuthProvider())) {
+
+                // 1. Tạo chuỗi Token ngẫu nhiên (UUID)
+                String plainToken = UUID.randomUUID().toString();
+
+                // 2. Hash Token để lưu vào Database
+                String hashedToken = hashToken(plainToken);
+
+                // 3. Lưu vào DB (Hạn dùng 15 phút)
+                PasswordResetToken resetToken = new PasswordResetToken();
+                resetToken.setUserId(user.getId());
+                resetToken.setTokenHash(hashedToken);
+                resetToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
+                tokenRepository.save(resetToken);
+
+                // 4. Gửi email chứa Plain Token (người dùng sẽ click link này)
+                String resetLink = "https://hilover.space/reset-password/" + plainToken;
+                emailService.sendPasswordResetEmail(user.getEmail(), resetLink);
+            }
+        });
+        // Hàm này luôn kết thúc êm đẹp, không trả về lỗi.
     }
 
-    public void resetPassword(ResetPasswordRequest req) {
-        String email = req.getEmail().trim().toLowerCase();
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy tài khoản với email này"));
+    public void resetPassword(String plainToken, ResetPasswordRequest req) {
+        // 1. Hash ngược cái token người dùng gửi lên để tìm trong DB
+        String hashedToken = hashToken(plainToken);
+
+        // 2. Tìm token trong DB (chưa được sử dụng)
         PasswordResetToken resetToken = tokenRepository
-                .findByUserIdAndTokenHashAndUsedAtIsNull(user.getId(), req.getCode().trim())
-                .orElseThrow(() -> new IllegalArgumentException("Mã xác nhận không đúng hoặc đã được sử dụng"));
+                .findByTokenHashAndUsedAtIsNull(hashedToken)
+                .orElseThrow(() -> new IllegalArgumentException("Link đặt lại mật khẩu không hợp lệ hoặc đã được sử dụng"));
+
+        // 3. Kiểm tra hạn dùng
         if (resetToken.getExpiresAt().isBefore(Instant.now())) {
-            throw new IllegalArgumentException("Mã xác nhận đã hết hạn");
+            throw new IllegalArgumentException("Link đặt lại mật khẩu đã hết hạn");
         }
+
+        // 4. Tìm User và đổi mật khẩu
+        User user = userRepository.findById(resetToken.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+
         user.setPassword(passwordEncoder.encode(req.getNewPassword()));
         userRepository.save(user);
+
+        // 5. Đánh dấu Token đã sử dụng (Xóa bỏ logic)
         resetToken.setUsedAt(Instant.now());
         tokenRepository.save(resetToken);
     }

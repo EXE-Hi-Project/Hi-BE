@@ -5,5 +5,5 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 import java.util.Optional;
 
 public interface PasswordResetTokenRepository extends MongoRepository<PasswordResetToken, String> {
-    Optional<PasswordResetToken> findByUserIdAndTokenHashAndUsedAtIsNull(String userId, String tokenHash);
+    Optional<PasswordResetToken> findByTokenHashAndUsedAtIsNull(String tokenHash);
 }

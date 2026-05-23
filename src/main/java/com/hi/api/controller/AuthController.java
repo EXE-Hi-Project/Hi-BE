@@ -90,21 +90,23 @@ public class AuthController {
 
     @PostMapping("/forgot-password")
     public ResponseEntity<Map<String, Object>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
-        try {
-            authService.forgotPassword(req);
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("success", true);
-            response.put("message", "Mã xác nhận đã được gửi đến email của bạn");
-            return ResponseEntity.ok(response);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
-        }
+        // Gọi service xử lý.
+        // Luôn trả về message chung theo Rule 4 trong ảnh để bảo mật email
+        authService.forgotPassword(req);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", true);
+        response.put("message", "Nếu email của bạn tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi đi.");
+        return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/reset-password")
-    public ResponseEntity<Map<String, Object>> resetPassword(@Valid @RequestBody ResetPasswordRequest req) {
+    @PostMapping("/reset-password/{token}")
+    public ResponseEntity<Map<String, Object>> resetPassword(
+            @PathVariable String token,
+            @Valid @RequestBody ResetPasswordRequest req) {
         try {
-            authService.resetPassword(req);
+            authService.resetPassword(token, req);
+
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
             response.put("message", "Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.");
