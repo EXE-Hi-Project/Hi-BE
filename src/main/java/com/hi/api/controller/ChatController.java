@@ -4,6 +4,7 @@ import com.hi.api.dto.request.SendMessageRequest;
 import com.hi.api.model.ChatMessage;
 import com.hi.api.model.User;
 import com.hi.api.service.ChatService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -14,6 +15,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/chat")
+@SecurityRequirement(name = "Bearer Authentication")
 public class ChatController {
 
     private final ChatService chatService;

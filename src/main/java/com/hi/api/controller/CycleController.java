@@ -5,6 +5,7 @@ import com.hi.api.dto.request.UpdateCycleRequest;
 import com.hi.api.model.Cycle;
 import com.hi.api.model.User;
 import com.hi.api.service.CycleService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +17,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/cycles")
+@SecurityRequirement(name = "Bearer Authentication")
 public class CycleController {
 
     private final CycleService cycleService;
