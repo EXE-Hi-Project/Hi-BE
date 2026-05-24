@@ -7,7 +7,9 @@ import com.hi.api.model.User;
 import com.hi.api.repository.CycleRepository;
 import com.hi.api.repository.UserRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -16,10 +18,14 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final CycleRepository cycleRepository;
+    private final NotificationService notificationService;
 
-    public UserService(UserRepository userRepository, CycleRepository cycleRepository) {
+    public UserService(UserRepository userRepository,
+                       CycleRepository cycleRepository,
+                       NotificationService notificationService) {
         this.userRepository = userRepository;
         this.cycleRepository = cycleRepository;
+        this.notificationService = notificationService;
     }
 
     public User updateProfile(String userId, UpdateProfileRequest req) {
@@ -48,7 +54,15 @@ public class UserService {
         return userRepository.save(user);
     }
 
+    @Transactional
     public Map<String, Object> connectPartner(String userId, ConnectPartnerRequest req) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+
+        if (user.getPartnerId() != null) {
+            throw new IllegalArgumentException("Bạn đã kết nối với một đối tác khác. Vui lòng hủy kết nối trước.");
+        }
+
         User partner = userRepository.findByPartnerCode(req.getPartnerCode().toUpperCase())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đối tác với mã này"));
 
@@ -56,14 +70,23 @@ public class UserService {
             throw new IllegalArgumentException("Không thể kết nối với chính mình");
         }
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
-
+        if (partner.getPartnerId() != null) {
+            throw new IllegalArgumentException("Đối tác này đã kết nối với một người khác.");
+        }
         user.setPartnerId(partner.getId());
         partner.setPartnerId(userId);
-
         userRepository.save(user);
         userRepository.save(partner);
+
+        notificationService.createNotification(
+                user.getId(), "PARTNER_CONNECT", "Kết nối thành công",
+                "Bạn đã kết nối bạn đời với " + (partner.getName() != null ? partner.getName() : "đối tác")
+        );
+
+        notificationService.createNotification(
+                partner.getId(), "PARTNER_CONNECT", "Kết nối thành công",
+                (user.getName() != null ? user.getName() : "Một người") + " đã kết nối bạn đời với bạn"
+        );
 
         return Map.of(
                 "name", partner.getName() != null ? partner.getName() : "",
@@ -71,28 +94,53 @@ public class UserService {
         );
     }
 
+    @Transactional
     public void disconnectPartner(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        String partnerId = user.getPartnerId();
 
-        if (user.getPartnerId() != null) {
-            userRepository.findById(user.getPartnerId()).ifPresent(p -> {
+        if (partnerId != null) {
+            userRepository.findById(partnerId).ifPresent(p -> {
                 p.setPartnerId(null);
                 userRepository.save(p);
+
+                // Gửi thông báo cho partner bị ngắt kết nối
+                notificationService.createNotification(
+                        p.getId(), "PARTNER_DISCONNECT", "Hủy kết nối",
+                        "Đối tác của bạn đã hủy kết nối bạn đời"
+                );
             });
         }
+
         user.setPartnerId(null);
         userRepository.save(user);
+        notificationService.createNotification(
+                userId, "PARTNER_DISCONNECT", "Hủy kết nối",
+                "Bạn đã hủy kết nối bạn đời thành công"
+        );
     }
 
-    public List<Cycle> getPartnerCycles(String userId) {
+    public Map<String, Object> getPartnerData(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
 
         if (user.getPartnerId() == null) {
-            throw new IllegalArgumentException("Chưa kết nối với đối tác");
+            return Map.of("partner", null, "cycles", List.of());
         }
 
-        return cycleRepository.findByUserIdOrderByStartDateDesc(user.getPartnerId());
+        User partner = userRepository.findById(user.getPartnerId())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy dữ liệu đối tác"));
+
+        List<Cycle> cycles = cycleRepository.findByUserIdOrderByStartDateDesc(partner.getId());
+        Map<String, Object> partnerProfile = new LinkedHashMap<>();
+        partnerProfile.put("id", partner.getId());
+        partnerProfile.put("name", partner.getName() != null ? partner.getName() : "");
+        partnerProfile.put("avatar", partner.getAvatar() != null ? partner.getAvatar() : "");
+        partnerProfile.put("gender", partner.getGender() != null ? partner.getGender() : "");
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("partner", partnerProfile);
+        response.put("cycles", cycles);
+        return response;
     }
 }

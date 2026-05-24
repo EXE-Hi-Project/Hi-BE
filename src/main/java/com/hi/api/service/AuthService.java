@@ -190,56 +190,33 @@ public class AuthService {
     }
     public void forgotPassword(ForgotPasswordRequest req) {
         String email = req.getEmail().trim().toLowerCase();
-
-        // Không throw Exception nếu không tìm thấy email (Bảo vệ thông tin User)
         userRepository.findByEmail(email).ifPresent(user -> {
-
-            // Chỉ hỗ trợ tài khoản đăng nhập Local
             if ("local".equals(user.getAuthProvider())) {
-
-                // 1. Tạo chuỗi Token ngẫu nhiên (UUID)
                 String plainToken = UUID.randomUUID().toString();
-
-                // 2. Hash Token để lưu vào Database
                 String hashedToken = hashToken(plainToken);
-
-                // 3. Lưu vào DB (Hạn dùng 15 phút)
                 PasswordResetToken resetToken = new PasswordResetToken();
                 resetToken.setUserId(user.getId());
                 resetToken.setTokenHash(hashedToken);
                 resetToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
                 tokenRepository.save(resetToken);
-
-                // 4. Gửi email chứa Plain Token (người dùng sẽ click link này)
                 String resetLink = "https://hilover.space/reset-password/" + plainToken;
                 emailService.sendPasswordResetEmail(user.getEmail(), resetLink);
             }
         });
-        // Hàm này luôn kết thúc êm đẹp, không trả về lỗi.
     }
 
     public void resetPassword(String plainToken, ResetPasswordRequest req) {
-        // 1. Hash ngược cái token người dùng gửi lên để tìm trong DB
         String hashedToken = hashToken(plainToken);
-
-        // 2. Tìm token trong DB (chưa được sử dụng)
         PasswordResetToken resetToken = tokenRepository
                 .findByTokenHashAndUsedAtIsNull(hashedToken)
                 .orElseThrow(() -> new IllegalArgumentException("Link đặt lại mật khẩu không hợp lệ hoặc đã được sử dụng"));
-
-        // 3. Kiểm tra hạn dùng
         if (resetToken.getExpiresAt().isBefore(Instant.now())) {
             throw new IllegalArgumentException("Link đặt lại mật khẩu đã hết hạn");
         }
-
-        // 4. Tìm User và đổi mật khẩu
         User user = userRepository.findById(resetToken.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
-
         user.setPassword(passwordEncoder.encode(req.getNewPassword()));
         userRepository.save(user);
-
-        // 5. Đánh dấu Token đã sử dụng (Xóa bỏ logic)
         resetToken.setUsedAt(Instant.now());
         tokenRepository.save(resetToken);
     }
