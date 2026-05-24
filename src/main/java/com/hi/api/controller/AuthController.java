@@ -6,11 +6,14 @@ import com.hi.api.dto.request.RegisterRequest;
 import com.hi.api.model.User;
 import com.hi.api.security.JwtUtil;
 import com.hi.api.service.AuthService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import com.hi.api.dto.request.ForgotPasswordRequest;
+import com.hi.api.dto.request.ResetPasswordRequest;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -48,6 +51,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
+    @SecurityRequirement(name = "Bearer Authentication")
     public ResponseEntity<Map<String, Object>> getMe(@AuthenticationPrincipal User user) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
@@ -57,6 +61,7 @@ public class AuthController {
     }
 
     @PostMapping("/refresh")
+    @SecurityRequirement(name = "Bearer Authentication")
     public ResponseEntity<Map<String, Object>> refresh(@AuthenticationPrincipal User user) {
         Map<String, Object> payload = authService.buildAuthPayload(user);
         Map<String, Object> response = new LinkedHashMap<>();
@@ -80,6 +85,34 @@ public class AuthController {
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("success", false, "message", "Lỗi xác thực Google: " + e.getMessage()));
+        }
+    }
+
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Map<String, Object>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
+        // Gọi service xử lý.
+        // Luôn trả về message chung theo Rule 4 trong ảnh để bảo mật email
+        authService.forgotPassword(req);
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", true);
+        response.put("message", "Nếu email của bạn tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi đi.");
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/reset-password/{token}")
+    public ResponseEntity<Map<String, Object>> resetPassword(
+            @PathVariable String token,
+            @Valid @RequestBody ResetPasswordRequest req) {
+        try {
+            authService.resetPassword(token, req);
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Đặt lại mật khẩu thành công. Vui lòng đăng nhập lại.");
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
     }
 }

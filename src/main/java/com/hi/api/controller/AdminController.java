@@ -3,6 +3,7 @@ package com.hi.api.controller;
 import com.hi.api.dto.request.UpdateRoleRequest;
 import com.hi.api.model.User;
 import com.hi.api.service.AdminService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -13,6 +14,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/admin")
 @PreAuthorize("hasRole('ADMIN')")
+@SecurityRequirement(name = "Bearer Authentication")
 public class AdminController {
 
     private final AdminService adminService;

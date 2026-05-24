@@ -3,6 +3,7 @@ package com.hi.api.controller;
 import com.hi.api.model.Notification;
 import com.hi.api.model.User;
 import com.hi.api.service.NotificationService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -12,6 +13,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/notifications")
+@SecurityRequirement(name = "Bearer Authentication")
 public class NotificationController {
 
     private final NotificationService notificationService;

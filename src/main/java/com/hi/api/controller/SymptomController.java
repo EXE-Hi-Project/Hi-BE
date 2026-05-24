@@ -4,6 +4,7 @@ import com.hi.api.dto.request.CreateSymptomRequest;
 import com.hi.api.model.Symptom;
 import com.hi.api.model.User;
 import com.hi.api.service.SymptomService;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +16,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/symptoms")
+@SecurityRequirement(name = "Bearer Authentication")
 public class SymptomController {
 
     private final SymptomService symptomService;
