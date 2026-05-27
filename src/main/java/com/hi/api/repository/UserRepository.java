@@ -24,4 +24,5 @@ public interface UserRepository extends MongoRepository<User, String> {
     List<User> findRecentUsersProjected(java.time.Instant since);
 
     List<User> findTop5ByOrderByCreatedAtDesc();
+    List<User> findByPeriodReminderTrue();
 }

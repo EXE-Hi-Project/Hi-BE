@@ -3,6 +3,7 @@ package com.hi.api.controller;
 import com.hi.api.dto.request.UpdateRoleRequest;
 import com.hi.api.model.User;
 import com.hi.api.service.AdminService;
+import com.hi.api.service.ReminderService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -18,9 +19,11 @@ import java.util.Map;
 public class AdminController {
 
     private final AdminService adminService;
+    private final ReminderService reminderService;
 
-    public AdminController(AdminService adminService) {
+    public AdminController(AdminService adminService, ReminderService reminderService) {
         this.adminService = adminService;
+        this.reminderService = reminderService;
     }
 
     @GetMapping("/overview")
@@ -50,5 +53,11 @@ public class AdminController {
             @Valid @RequestBody UpdateRoleRequest req) {
         User user = adminService.updateUserRole(id, req.getRole());
         return ResponseEntity.ok(Map.of("success", true, "user", user));
+    }
+
+    @PostMapping("/trigger-reminders")
+    public ResponseEntity<Map<String, Object>> triggerReminders() {
+        reminderService.generatePeriodReminders();
+        return ResponseEntity.ok(Map.of("success", true, "message", "Đã kích hoạt chạy thủ công Job nhắc nhở kỳ kinh"));
     }
 }
