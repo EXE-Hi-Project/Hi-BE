@@ -9,4 +9,6 @@ import java.util.Optional;
 public interface CycleRepository extends MongoRepository<Cycle, String> {
     List<Cycle> findByUserIdOrderByStartDateDesc(String userId);
     Optional<Cycle> findByIdAndUserId(String id, String userId);
+    Optional<Cycle> findFirstByUserIdOrderByStartDateDesc(String userId);
+
 }

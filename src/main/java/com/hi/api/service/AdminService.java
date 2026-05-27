@@ -1,11 +1,8 @@
 package com.hi.api.service;
 
+import com.hi.api.model.AdminAuditLog;
 import com.hi.api.model.User;
-import com.hi.api.repository.ChatRepository;
-import com.hi.api.repository.CycleRepository;
-import com.hi.api.repository.NotificationRepository;
-import com.hi.api.repository.SymptomRepository;
-import com.hi.api.repository.UserRepository;
+import com.hi.api.repository.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -13,6 +10,7 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -25,6 +23,7 @@ public class AdminService {
     private final CycleRepository cycleRepository;
     private final SymptomRepository symptomRepository;
     private final NotificationRepository notificationRepository;
+    private final AdminAuditLogRepository auditLogRepository;
     private final ChatRepository chatRepository;
     private final MongoTemplate mongoTemplate;
 
@@ -51,12 +50,14 @@ public class AdminService {
 
     public AdminService(UserRepository userRepository, CycleRepository cycleRepository,
                         SymptomRepository symptomRepository, NotificationRepository notificationRepository,
-                        ChatRepository chatRepository, MongoTemplate mongoTemplate) {
+                        ChatRepository chatRepository, AdminAuditLogRepository auditLogRepository,
+                        MongoTemplate mongoTemplate) {
         this.userRepository = userRepository;
         this.cycleRepository = cycleRepository;
         this.symptomRepository = symptomRepository;
         this.notificationRepository = notificationRepository;
         this.chatRepository = chatRepository;
+        this.auditLogRepository = auditLogRepository;
         this.mongoTemplate = mongoTemplate;
     }
 
@@ -226,11 +227,67 @@ public class AdminService {
         return result;
     }
 
-    public User updateUserRole(String userId, String role) {
-        User user = userRepository.findById(userId)
+    public User updateUserRole(String actorUserId, String targetUserId, String newRole, String ipAddress) {
+        if (actorUserId.equals(targetUserId)) {
+            throw new IllegalArgumentException("Thao tác nguy hiểm: Bạn không thể tự thay đổi quyền của chính mình.");
+        }
+
+        String safeRole = newRole.toLowerCase().trim();
+        if (!List.of("admin", "user").contains(safeRole)) {
+            throw new IllegalArgumentException("Quyền (Role) không hợp lệ. Chỉ chấp nhận 'admin' hoặc 'user'.");
+        }
+
+        User user = userRepository.findById(targetUserId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
-        user.setRole(role);
-        return userRepository.save(user);
+
+        String oldRole = user.getRole() != null ? user.getRole() : "user";
+
+        if (!oldRole.equals(safeRole)) {
+            user.setRole(safeRole);
+            userRepository.save(user);
+            AdminAuditLog log = new AdminAuditLog();
+            log.setActorUserId(actorUserId);
+            log.setTargetUserId(targetUserId);
+            log.setAction("UPDATE_USER_ROLE");
+            log.setEntityType("USER");
+            log.setEntityId(targetUserId);
+            log.setBeforeData(oldRole);
+            log.setAfterData(safeRole);
+            log.setIpAddress(ipAddress);
+            auditLogRepository.save(log);
+        }
+
+        return user;
+    }
+
+    public byte[] exportUsersCsv() {
+        Query query = new Query().with(Sort.by(Sort.Direction.DESC, "createdAt"));
+        List<User> users = mongoTemplate.find(query, User.class);
+
+        StringBuilder sb = new StringBuilder();
+        // UTF-8 BOM để Excel đọc tiếng Việt không bị lỗi font
+        sb.append('\ufeff');
+        sb.append("ID,Họ và Tên,Email,Role,Giới tính,Ngày tham gia\n");
+
+        for (User u : users) {
+            sb.append(escapeCsv(u.getId())).append(",")
+                    .append(escapeCsv(u.getName())).append(",")
+                    .append(escapeCsv(u.getEmail())).append(",")
+                    .append(escapeCsv(u.getRole())).append(",")
+                    .append(escapeCsv(u.getGender())).append(",")
+                    .append(u.getCreatedAt() != null ? u.getCreatedAt().toString() : "").append("\n");
+        }
+
+        return sb.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private String escapeCsv(String data) {
+        if (data == null) return "";
+        String escaped = data.replaceAll("\\R", " "); // Xóa dấu xuống dòng
+        if (escaped.contains(",") || escaped.contains("\"")) {
+            escaped = "\"" + escaped.replace("\"", "\"\"") + "\"";
+        }
+        return escaped;
     }
 
     private double round2(double value) {
