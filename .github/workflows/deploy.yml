@@ -39,6 +39,14 @@ jobs:
             chmod +x ./mvnw
             ./mvnw clean package -DskipTests
 
+            JAR_PATH=$(ls -1 target/hi-api-*.jar | head -n 1)
+            if [ -z "$JAR_PATH" ] || [ ! -f "$JAR_PATH" ]; then
+              echo "❌ Built jar not found in target/"
+              ls -la target || true
+              exit 1
+            fi
+            echo "✅ Built jar: $JAR_PATH"
+
             echo "🌱 Loading environment..."
             if [ -f .env ]; then
               set -a
@@ -50,11 +58,24 @@ jobs:
             if pm2 describe hi-api >/dev/null 2>&1; then
               pm2 delete hi-api
             fi
-            pm2 start "java -jar /home/${USER}/hi-app/target/hi-api-1.0.0.jar" --name hi-api --update-env
+            pm2 start /usr/bin/java --name hi-api --update-env -- -jar "/home/${USER}/hi-app/$JAR_PATH"
             pm2 save
+            pm2 status hi-api
 
             echo "✅ Health check..."
-            sleep 8
-            curl -f http://localhost:5000/health || (echo "❌ Health check failed!" && exit 1)
+            for i in {1..15}; do
+              if curl -fsS http://localhost:5000/health >/dev/null; then
+                echo "✅ Health check passed"
+                break
+              fi
+              echo "⏳ Waiting for app startup ($i/15)..."
+              sleep 2
+            done
+
+            if ! curl -fsS http://localhost:5000/health >/dev/null; then
+              echo "❌ Health check failed! Recent PM2 logs:"
+              pm2 logs hi-api --lines 80 --nostream || true
+              exit 1
+            fi
 
             echo "🎉 Deploy BE hoàn tất!"
