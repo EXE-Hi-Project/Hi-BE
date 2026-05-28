@@ -21,7 +21,13 @@ public class PasswordResetToken {
 
     private String userId;
 
-    // Lưu trữ mã OTP 6 số (có thể băm nếu muốn bảo mật tuyệt đối, ở đây lưu plain text cho dễ test)
+    // Hash của OTP 6 số (phase 1 - forgot password)
+    private String otpHash;
+
+    // true sau khi user xác nhận OTP đúng
+    private Boolean otpVerified = false;
+
+    // Hash của UUID reset token (phase 2 - sau khi OTP xác minh thành công)
     private String tokenHash;
 
     private Instant expiresAt;

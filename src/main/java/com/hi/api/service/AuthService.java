@@ -14,6 +14,7 @@ import com.hi.api.security.JwtUtil;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
 import java.nio.charset.StandardCharsets;
@@ -23,6 +24,8 @@ import java.util.*;
 
 @Service
 public class AuthService {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthService.class);
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -166,6 +169,77 @@ public class AuthService {
         return buildAuthPayload(user);
     }
 
+    public Map<String, Object> facebookAuth(GoogleAuthRequest req) {
+        if (req.getAccessToken() == null || req.getAccessToken().isBlank()) {
+            throw new IllegalArgumentException("Thiáº¿u Facebook access token");
+        }
+
+        String url = "https://graph.facebook.com/me?fields=id,name,email,picture.type(large)&access_token="
+                + req.getAccessToken();
+        Map<String, Object> userInfo;
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = restTemplate.getForObject(url, Map.class);
+            userInfo = response;
+        } catch (RestClientResponseException e) {
+            throw new IllegalArgumentException("Facebook token khÃ´ng há»£p lá»‡");
+        }
+        if (userInfo == null) {
+            throw new IllegalArgumentException("Facebook token khÃ´ng há»£p lá»‡");
+        }
+
+        String facebookId = (String) userInfo.get("id");
+        if (facebookId == null || facebookId.isBlank()) {
+            throw new IllegalArgumentException("Facebook token khÃ´ng há»£p lá»‡");
+        }
+        if (req.getUserID() != null && !req.getUserID().isBlank() && !facebookId.equals(req.getUserID())) {
+            throw new IllegalArgumentException("Facebook user khÃ´ng khá»›p vá»›i access token");
+        }
+
+        String email = (String) userInfo.get("email");
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("TÃ i khoáº£n Facebook chÆ°a chia sáº» email há»£p lá»‡");
+        }
+        email = email.trim().toLowerCase();
+
+        String name = (String) userInfo.get("name");
+        String picture = "";
+        Object pictureObj = userInfo.get("picture");
+        if (pictureObj instanceof Map<?, ?> pictureMap) {
+            Object dataObj = pictureMap.get("data");
+            if (dataObj instanceof Map<?, ?> dataMap) {
+                Object urlObj = dataMap.get("url");
+                if (urlObj instanceof String urlStr) {
+                    picture = urlStr;
+                }
+            }
+        }
+
+        final String finalFacebookId = facebookId;
+        final String finalEmail = email;
+        User user = userRepository.findByFacebookIdOrEmail(finalFacebookId, finalEmail).orElse(null);
+
+        if (user == null) {
+            user = new User();
+            user.setFacebookId(facebookId);
+            user.setEmail(email);
+            user.setName(name);
+            user.setAvatar(picture);
+            user.setAuthProvider("facebook");
+            user.setRole(getAdminEmails().contains(email) ? "admin" : "user");
+            user.setPartnerCode(generatePartnerCode());
+        } else {
+            if (user.getFacebookId() == null) user.setFacebookId(facebookId);
+            if (!picture.isBlank() && (user.getAvatar() == null || user.getAvatar().isBlank())) {
+                user.setAvatar(picture);
+            }
+            user.setAuthProvider("facebook");
+        }
+
+        userRepository.save(user);
+        return buildAuthPayload(user);
+    }
+
     public Map<String, Object> buildAuthPayload(User user) {
         Map<String, Object> payload = new HashMap<>();
         payload.put("token", jwtUtil.generateToken(user.getId()));
@@ -188,30 +262,69 @@ public class AuthService {
         m.put("partnerId", user.getPartnerId());
         return m;
     }
+
     public void forgotPassword(ForgotPasswordRequest req) {
         String email = req.getEmail().trim().toLowerCase();
-        userRepository.findByEmail(email).ifPresent(user -> {
-            if ("local".equals(user.getAuthProvider())) {
-                String plainToken = UUID.randomUUID().toString();
-                String hashedToken = hashToken(plainToken);
-                PasswordResetToken resetToken = new PasswordResetToken();
-                resetToken.setUserId(user.getId());
-                resetToken.setTokenHash(hashedToken);
-                resetToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
-                tokenRepository.save(resetToken);
-                String resetLink = "https://hilover.space/reset-password/" + plainToken;
-                emailService.sendPasswordResetEmail(user.getEmail(), resetLink);
-            }
-        });
+        log.info("[FORGOT-PASSWORD] Yêu cầu reset password cho email: {}", email);
+
+        java.util.Optional<User> userOpt = userRepository.findByEmail(email);
+        if (userOpt.isEmpty()) {
+            log.info("[FORGOT-PASSWORD] Không tìm thấy user với email: {}", email);
+            return;
+        }
+
+        User user = userOpt.get();
+        if (!"local".equals(user.getAuthProvider())) {
+            log.warn("[FORGOT-PASSWORD] User {} đăng ký qua {} (không phải local) — không gửi OTP",
+                    email, user.getAuthProvider());
+            return;
+        }
+
+        // Tạo OTP 6 chữ số an toàn
+        String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
+        String otpHash = hashToken(otp);
+
+        PasswordResetToken resetToken = new PasswordResetToken();
+        resetToken.setUserId(user.getId());
+        resetToken.setOtpHash(otpHash);
+        resetToken.setOtpVerified(false);
+        resetToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
+        tokenRepository.save(resetToken);
+
+        log.info("[FORGOT-PASSWORD] Đã lưu OTP token cho user: {}, gửi email...", email);
+        emailService.sendOtpEmail(user.getEmail(), user.getName(), otp);
+    }
+
+    public String verifyOtp(VerifyOtpRequest req) {
+        String email = req.getEmail().trim().toLowerCase();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("Mã OTP không đúng hoặc đã hết hạn"));
+
+        String otpHash = hashToken(req.getOtp());
+        PasswordResetToken token = tokenRepository
+                .findByUserIdAndOtpHashAndUsedAtIsNull(user.getId(), otpHash)
+                .orElseThrow(() -> new IllegalArgumentException("Mã OTP không đúng hoặc đã hết hạn"));
+
+        if (token.getExpiresAt().isBefore(Instant.now())) {
+            throw new IllegalArgumentException("Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.");
+        }
+
+        // Tạo UUID reset token sau khi OTP hợp lệ
+        String plainToken = UUID.randomUUID().toString();
+        token.setTokenHash(hashToken(plainToken));
+        token.setOtpVerified(true);
+        tokenRepository.save(token);
+
+        return plainToken;
     }
 
     public void resetPassword(String plainToken, ResetPasswordRequest req) {
         String hashedToken = hashToken(plainToken);
         PasswordResetToken resetToken = tokenRepository
-                .findByTokenHashAndUsedAtIsNull(hashedToken)
-                .orElseThrow(() -> new IllegalArgumentException("Link đặt lại mật khẩu không hợp lệ hoặc đã được sử dụng"));
+                .findByTokenHashAndUsedAtIsNullAndOtpVerifiedTrue(hashedToken)
+                .orElseThrow(() -> new IllegalArgumentException("Đường dẫn đặt lại mật khẩu không hợp lệ hoặc đã được sử dụng"));
         if (resetToken.getExpiresAt().isBefore(Instant.now())) {
-            throw new IllegalArgumentException("Link đặt lại mật khẩu đã hết hạn");
+            throw new IllegalArgumentException("Đường dẫn đặt lại mật khẩu đã hết hạn");
         }
         User user = userRepository.findById(resetToken.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));

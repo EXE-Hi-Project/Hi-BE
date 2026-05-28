@@ -68,6 +68,19 @@ public class User {
     // Onboarding
     private Boolean onboardingCompleted = false;
 
+    // Subscription
+    private SubscriptionInfo subscription = new SubscriptionInfo();
+
+    @Data
+    @NoArgsConstructor
+    public static class SubscriptionInfo {
+        private String stripeCustomerId;
+        private String stripeSubscriptionId;
+        private String plan = "free";
+        private String status;
+        private Instant currentPeriodEnd;
+    }
+
     @CreatedDate
     private Instant createdAt;
 

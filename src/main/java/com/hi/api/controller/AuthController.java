@@ -14,6 +14,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import com.hi.api.dto.request.ForgotPasswordRequest;
 import com.hi.api.dto.request.ResetPasswordRequest;
+import com.hi.api.dto.request.VerifyOtpRequest;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -88,13 +89,44 @@ public class AuthController {
         }
     }
 
+    @PostMapping("/facebook")
+    public ResponseEntity<Map<String, Object>> facebookAuth(@RequestBody GoogleAuthRequest req) {
+        try {
+            Map<String, Object> payload = authService.facebookAuth(req);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "ÄÄƒng nháº­p Facebook thÃ nh cÃ´ng");
+            response.put("data", payload);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "message", "Lá»—i xÃ¡c thá»±c Facebook: " + e.getMessage()));
+        }
+    }
+
     @PostMapping("/forgot-password")
     public ResponseEntity<Map<String, Object>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
         authService.forgotPassword(req);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
-        response.put("message", "Nếu email của bạn tồn tại trong hệ thống, hướng dẫn đặt lại mật khẩu đã được gửi đi.");
+        response.put("message", "Nếu email của bạn tồn tại trong hệ thống, mã OTP đã được gửi đến email của bạn.");
         return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/verify-otp")
+    public ResponseEntity<Map<String, Object>> verifyOtp(@Valid @RequestBody VerifyOtpRequest req) {
+        try {
+            String resetToken = authService.verifyOtp(req);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Xác minh OTP thành công");
+            response.put("data", Map.of("resetToken", resetToken));
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
     }
 
     @PostMapping("/reset-password/{token}")
