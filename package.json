@@ -1,32 +1,13 @@
 {
-	"name": "@hi/api",
-	"version": "1.0.0",
-	"private": true,
-	"main": "src/index.js",
-	"scripts": {
-		"dev": "nodemon src/index.js",
-		"start": "node src/index.js",
-		"check:syntax": "node scripts/check-syntax.mjs",
-		"build": "npm run check:syntax",
-		"migrate:roles": "node src/scripts/migrateUserRoles.js",
-		"rag:ingest": "node src/rag/ingest.js"
-	},
-	"dependencies": {
-		"@aws-sdk/client-bedrock-runtime": "^3.821.0",
-		"@aws-sdk/client-s3": "^3.821.0",
-		"bcryptjs": "^2.4.3",
-		"chromadb": "^1.9.2",
-		"cors": "^2.8.5",
-		"dotenv": "^16.4.5",
-		"express": "^4.21.2",
-		"google-auth-library": "^10.6.2",
-		"helmet": "^8.1.0",
-		"jsonwebtoken": "^9.0.2",
-		"mongoose": "^8.19.1",
-		"morgan": "^1.10.0",
-		"recharts": "^3.8.0"
-	},
-	"devDependencies": {
-		"nodemon": "^3.1.9"
-	}
+  "name": "@hi/api-java",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hi API - Java Spring Boot backend",
+  "scripts": {
+    "dev": "mvnw.cmd spring-boot:run -Dspring-boot.run.profiles=local",
+    "build": "mvnw.cmd clean package -DskipTests",
+    "start": "java -jar target/hi-api-1.0.0.jar --spring.profiles.active=local",
+    "test": "mvnw.cmd test",
+    "clean": "mvnw.cmd clean"
+  }
 }

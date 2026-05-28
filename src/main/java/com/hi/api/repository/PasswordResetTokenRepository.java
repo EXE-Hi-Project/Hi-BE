@@ -1,0 +1,11 @@
+package com.hi.api.repository;
+
+import com.hi.api.model.PasswordResetToken;
+import org.springframework.data.mongodb.repository.MongoRepository;
+import java.util.Optional;
+
+public interface PasswordResetTokenRepository extends MongoRepository<PasswordResetToken, String> {
+    Optional<PasswordResetToken> findByTokenHashAndUsedAtIsNull(String tokenHash);
+    Optional<PasswordResetToken> findByUserIdAndOtpHashAndUsedAtIsNull(String userId, String otpHash);
+    Optional<PasswordResetToken> findByTokenHashAndUsedAtIsNullAndOtpVerifiedTrue(String tokenHash);
+}
