@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Value;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @Value
 @Builder
@@ -21,4 +22,26 @@ public class CycleRecordInsightResponse {
 
     @JsonFormat(pattern = "yyyy-MM-dd")
     LocalDate predictedNextEndDate;
+
+    Double symptomImpactScore;
+    List<PhaseSymptomImpact> phaseSymptomImpacts;
+    List<SymptomImpactItem> topSymptoms;
+
+    @Value
+    @Builder
+    public static class PhaseSymptomImpact {
+        String phase;
+        Double impactScore;
+        long occurrenceCount;
+    }
+
+    @Value
+    @Builder
+    public static class SymptomImpactItem {
+        Long symptomId;
+        String symptomName;
+        Double impactScore;
+        Double averageSeverity;
+        long occurrenceCount;
+    }
 }

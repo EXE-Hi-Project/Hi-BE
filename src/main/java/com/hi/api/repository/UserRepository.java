@@ -33,4 +33,7 @@ public interface UserRepository extends MongoRepository<User, String> {
 
     @Query("{ 'subscription.stripeSubscriptionId': ?0 }")
     Optional<User> findByStripeSubscriptionId(String stripeSubscriptionId);
+
+    @Query("{ 'subscription.payosOrderCode': ?0 }")
+    Optional<User> findByPayosOrderCode(Long payosOrderCode);
 }

@@ -34,7 +34,7 @@ public class UserController {
     @PutMapping("/profile")
     public ResponseEntity<Map<String, Object>> updateProfile(
             @AuthenticationPrincipal User user,
-            @RequestBody UpdateProfileRequest req) {
+            @Valid @RequestBody UpdateProfileRequest req) {
         User updated = userService.updateProfile(user.getId(), req);
         return ResponseEntity.ok(Map.of("success", true, "user", updated));
     }

@@ -76,6 +76,7 @@ public class User {
     public static class SubscriptionInfo {
         private String stripeCustomerId;
         private String stripeSubscriptionId;
+        private Long payosOrderCode;
         private String plan = "free";
         private String status;
         private Instant currentPeriodEnd;

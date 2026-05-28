@@ -2,12 +2,12 @@ package com.hi.api.controller;
 
 import com.hi.api.model.User;
 import com.hi.api.service.PaymentService;
-import com.stripe.exception.StripeException;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import vn.payos.model.webhooks.Webhook;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -30,7 +30,7 @@ public class PaymentController {
         try {
             String priceId = requestBody.get("priceId");
             if (priceId == null || priceId.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Price ID là bắt buộc"));
+                return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Price ID (planType) là bắt buộc"));
             }
 
             String checkoutUrl = paymentService.createCheckoutSession(user, priceId);
@@ -39,18 +39,16 @@ public class PaymentController {
             response.put("message", "Tạo phiên thanh toán thành công");
             response.put("data", Map.of("checkoutUrl", checkoutUrl));
             return ResponseEntity.ok(response);
-        } catch (StripeException e) {
+        } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Lỗi tạo Checkout Session: " + e.getMessage()));
+                    .body(Map.of("success", false, "message", "Lỗi tạo phiên thanh toán: " + e.getMessage()));
         }
     }
 
     @PostMapping("/webhook")
-    public ResponseEntity<String> handleWebhook(
-            @RequestBody String payload,
-            @RequestHeader("Stripe-Signature") String sigHeader) {
+    public ResponseEntity<String> handleWebhook(@RequestBody Webhook webhook) {
         try {
-            paymentService.handleWebhook(payload, sigHeader);
+            paymentService.handleWebhook(webhook);
             return ResponseEntity.ok("Received");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("Webhook Error: " + e.getMessage());
@@ -72,10 +70,7 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> cancelSubscription(@AuthenticationPrincipal User user) {
         try {
             paymentService.cancelSubscription(user);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Đã lên lịch huỷ subscription khi hết kỳ thanh toán"));
-        } catch (StripeException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Lỗi khi hủy subscription: " + e.getMessage()));
+            return ResponseEntity.ok(Map.of("success", true, "message", "Đã hủy gia hạn gói Premium"));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }

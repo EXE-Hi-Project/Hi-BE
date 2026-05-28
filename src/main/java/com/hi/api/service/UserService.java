@@ -9,6 +9,8 @@ import com.hi.api.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +34,9 @@ public class UserService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
 
+        String effectiveGender = req.getGender() != null ? req.getGender() : user.getGender();
+        validateOnboardingPayload(req, effectiveGender);
+
         if (req.getName() != null) user.setName(req.getName());
         if (req.getGender() != null) user.setGender(req.getGender());
         if (req.getBirthDate() != null) user.setBirthDate(req.getBirthDate());
@@ -52,6 +57,64 @@ public class UserService {
         if (req.getOnboardingCompleted() != null) user.setOnboardingCompleted(req.getOnboardingCompleted());
 
         return userRepository.save(user);
+    }
+
+    private void validateOnboardingPayload(UpdateProfileRequest req, String effectiveGender) {
+        if (req.getLastPeriodDate() != null && req.getLastPeriodEndDate() != null) {
+            try {
+                LocalDate start = LocalDate.parse(req.getLastPeriodDate());
+                LocalDate end = LocalDate.parse(req.getLastPeriodEndDate());
+                if (end.isBefore(start)) {
+                    throw new IllegalArgumentException("Ngày kết thúc kỳ kinh phải sau hoặc bằng ngày bắt đầu");
+                }
+            } catch (DateTimeParseException ex) {
+                throw new IllegalArgumentException("Ngày kỳ kinh không hợp lệ");
+            }
+        }
+
+        if (!Boolean.TRUE.equals(req.getOnboardingCompleted())) {
+            return;
+        }
+
+        if (effectiveGender == null || effectiveGender.isBlank()) {
+            throw new IllegalArgumentException("Onboarding yêu cầu chọn giới tính");
+        }
+
+        if (req.getGoals() == null || req.getGoals().isEmpty()) {
+            throw new IllegalArgumentException("Onboarding yêu cầu chọn ít nhất 1 mục tiêu");
+        }
+
+        if ("female".equalsIgnoreCase(effectiveGender)) {
+            if (req.getDefaultCycleLength() == null) {
+                throw new IllegalArgumentException("Onboarding nữ yêu cầu độ dài chu kỳ");
+            }
+            if (req.getDefaultPeriodLength() == null) {
+                throw new IllegalArgumentException("Onboarding nữ yêu cầu độ dài kỳ kinh");
+            }
+            if (req.getIrregularCycle() == null) {
+                throw new IllegalArgumentException("Onboarding nữ yêu cầu thông tin chu kỳ không đều");
+            }
+            if (req.getPeriodReminder() == null) {
+                throw new IllegalArgumentException("Onboarding nữ yêu cầu thiết lập nhắc kỳ kinh");
+            }
+            if (req.getReminderDaysBefore() == null) {
+                throw new IllegalArgumentException("Onboarding nữ yêu cầu số ngày nhắc trước");
+            }
+            return;
+        }
+
+        if ("male".equalsIgnoreCase(effectiveGender)) {
+            if (req.getDefaultCycleLength() != null
+                    || req.getDefaultPeriodLength() != null
+                    || req.getLastPeriodDate() != null
+                    || req.getLastPeriodEndDate() != null
+                    || req.getIrregularCycle() != null) {
+                throw new IllegalArgumentException("Onboarding nam không nhận dữ liệu chu kỳ cá nhân");
+            }
+            return;
+        }
+
+        throw new IllegalArgumentException("Giới tính onboarding không được hỗ trợ");
     }
 
     @Transactional
