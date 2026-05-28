@@ -29,14 +29,32 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
-            echo "📥 Installing dependencies..."
-            npm ci --omit=dev
+            echo "☕ Verifying Java runtime..."
+            if ! command -v java >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y openjdk-17-jre-headless
+            fi
 
-            echo "♻️  Restarting PM2..."
-            pm2 restart hi-api --update-env
+            echo "🛠️  Building Spring Boot jar..."
+            chmod +x ./mvnw
+            ./mvnw clean package -DskipTests
+
+            echo "🌱 Loading environment..."
+            if [ -f .env ]; then
+              set -a
+              . ./.env
+              set +a
+            fi
+
+            echo "♻️  Restarting PM2 (Java)..."
+            if pm2 describe hi-api >/dev/null 2>&1; then
+              pm2 delete hi-api
+            fi
+            pm2 start "java -jar /home/${USER}/hi-app/target/hi-api-1.0.0.jar" --name hi-api --update-env
+            pm2 save
 
             echo "✅ Health check..."
-            sleep 3
+            sleep 8
             curl -f http://localhost:5000/health || (echo "❌ Health check failed!" && exit 1)
 
             echo "🎉 Deploy BE hoàn tất!"
