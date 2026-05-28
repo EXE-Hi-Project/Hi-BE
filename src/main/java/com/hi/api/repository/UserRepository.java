@@ -36,4 +36,6 @@ public interface UserRepository extends MongoRepository<User, String> {
 
     @Query("{ 'subscription.payosOrderCode': ?0 }")
     Optional<User> findByPayosOrderCode(Long payosOrderCode);
+
+    List<User> findByPeriodReminderTrue();
 }
