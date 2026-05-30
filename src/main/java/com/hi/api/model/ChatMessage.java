@@ -20,7 +20,6 @@ public class ChatMessage {
     private String id;
 
     private String userId;
-    private String role;
     private String content;
 
     @CreatedDate

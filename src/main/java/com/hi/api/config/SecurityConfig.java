@@ -66,6 +66,7 @@ public class SecurityConfig {
                 // Allow preflight
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                    .requestMatchers("/chat/**").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class);
