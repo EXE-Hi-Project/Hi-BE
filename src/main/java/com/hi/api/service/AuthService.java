@@ -41,8 +41,8 @@ public class AuthService {
     private String googleClientId;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
-                       JwtUtil jwtUtil, PasswordResetTokenRepository tokenRepository,
-                       EmailService emailService) {
+            JwtUtil jwtUtil, PasswordResetTokenRepository tokenRepository,
+            EmailService emailService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
@@ -57,7 +57,8 @@ public class AuthService {
     }
 
     private List<String> getAdminEmails() {
-        if (adminEmailsStr == null || adminEmailsStr.isBlank()) return List.of();
+        if (adminEmailsStr == null || adminEmailsStr.isBlank())
+            return List.of();
         return java.util.Arrays.stream(adminEmailsStr.split(","))
                 .map(String::trim)
                 .map(String::toLowerCase)
@@ -117,7 +118,8 @@ public class AuthService {
                     .build();
 
             GoogleIdToken idToken = verifier.verify(req.getCredential());
-            if (idToken == null) throw new IllegalArgumentException("Google token không hợp lệ");
+            if (idToken == null)
+                throw new IllegalArgumentException("Google token không hợp lệ");
 
             GoogleIdToken.Payload payload = idToken.getPayload();
             googleId = payload.getSubject();
@@ -130,7 +132,8 @@ public class AuthService {
             @SuppressWarnings("unchecked")
             Map<String, Object> userInfo = restTemplate.getForObject(
                     url + "?access_token=" + req.getAccessToken(), Map.class);
-            if (userInfo == null) throw new IllegalArgumentException("Google token không hợp lệ");
+            if (userInfo == null)
+                throw new IllegalArgumentException("Google token không hợp lệ");
             googleId = (String) userInfo.get("sub");
             email = (String) userInfo.get("email");
             name = (String) userInfo.get("name");
@@ -158,7 +161,8 @@ public class AuthService {
             user.setRole(getAdminEmails().contains(email) ? "admin" : "user");
             user.setPartnerCode(generatePartnerCode());
         } else {
-            if (user.getGoogleId() == null) user.setGoogleId(googleId);
+            if (user.getGoogleId() == null)
+                user.setGoogleId(googleId);
             if (picture != null && !picture.isBlank() && (user.getAvatar() == null || user.getAvatar().isBlank())) {
                 user.setAvatar(picture);
             }
@@ -229,7 +233,8 @@ public class AuthService {
             user.setRole(getAdminEmails().contains(email) ? "admin" : "user");
             user.setPartnerCode(generatePartnerCode());
         } else {
-            if (user.getFacebookId() == null) user.setFacebookId(facebookId);
+            if (user.getFacebookId() == null)
+                user.setFacebookId(facebookId);
             if (!picture.isBlank() && (user.getAvatar() == null || user.getAvatar().isBlank())) {
                 user.setAvatar(picture);
             }
@@ -279,7 +284,8 @@ public class AuthService {
             log.warn("[FORGOT-PASSWORD] User {} đăng ký qua {} (không phải local) — không gửi OTP",
                     email, user.getAuthProvider());
             throw new IllegalArgumentException(
-                "Tài khoản này đăng ký bằng " + provider + ". Vui lòng đăng nhập bằng nút \"Đăng nhập với " + provider + "\" — không cần mật khẩu.");
+                    "Tài khoản này đăng ký bằng " + provider + ". Vui lòng đăng nhập bằng nút \"Đăng nhập với "
+                            + provider + "\" — không cần mật khẩu.");
         }
 
         // Tạo OTP 6 chữ số an toàn
@@ -298,7 +304,9 @@ public class AuthService {
             emailService.sendOtpEmail(user.getEmail(), user.getName(), otp);
         } catch (Exception ex) {
             log.error("[FORGOT-PASSWORD] Gửi email OTP thất bại cho {}: {}", email, ex.getMessage(), ex);
-            throw new IllegalArgumentException("Hệ thống gửi Email gặp sự cố (Chưa cấu hình Gmail App Password hoặc bị chặn). Vui lòng cấu hình MAIL_PASSWORD trong .env. Chi tiết lỗi: " + ex.getMessage());
+            throw new IllegalArgumentException(
+                    "Hệ thống gửi Email gặp sự cố (Chưa cấu hình Gmail App Password hoặc bị chặn). Vui lòng cấu hình MAIL_PASSWORD trong .env. Chi tiết lỗi: "
+                            + ex.getMessage());
         }
     }
 
@@ -329,7 +337,8 @@ public class AuthService {
         String hashedToken = hashToken(plainToken);
         PasswordResetToken resetToken = tokenRepository
                 .findByTokenHashAndUsedAtIsNullAndOtpVerifiedTrue(hashedToken)
-                .orElseThrow(() -> new IllegalArgumentException("Đường dẫn đặt lại mật khẩu không hợp lệ hoặc đã được sử dụng"));
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Đường dẫn đặt lại mật khẩu không hợp lệ hoặc đã được sử dụng"));
         if (resetToken.getExpiresAt().isBefore(Instant.now())) {
             throw new IllegalArgumentException("Đường dẫn đặt lại mật khẩu đã hết hạn");
         }
