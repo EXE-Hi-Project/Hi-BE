@@ -108,11 +108,15 @@ public class AuthController {
 
     @PostMapping("/forgot-password")
     public ResponseEntity<Map<String, Object>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
-        authService.forgotPassword(req);
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("success", true);
-        response.put("message", "Nếu email của bạn tồn tại trong hệ thống, mã OTP đã được gửi đến email của bạn.");
-        return ResponseEntity.ok(response);
+        try {
+            authService.forgotPassword(req);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Nếu email của bạn tồn tại trong hệ thống, mã OTP đã được gửi đến email của bạn.");
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
     }
 
     @PostMapping("/verify-otp")

@@ -275,9 +275,11 @@ public class AuthService {
 
         User user = userOpt.get();
         if (!"local".equals(user.getAuthProvider())) {
+            String provider = "google".equals(user.getAuthProvider()) ? "Google" : "Facebook";
             log.warn("[FORGOT-PASSWORD] User {} đăng ký qua {} (không phải local) — không gửi OTP",
                     email, user.getAuthProvider());
-            return;
+            throw new IllegalArgumentException(
+                "Tài khoản này đăng ký bằng " + provider + ". Vui lòng đăng nhập bằng nút \"Đăng nhập với " + provider + "\" — không cần mật khẩu.");
         }
 
         // Tạo OTP 6 chữ số an toàn
