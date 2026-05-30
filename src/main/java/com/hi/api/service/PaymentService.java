@@ -1,7 +1,9 @@
 package com.hi.api.service;
 
 import com.hi.api.model.User;
+import com.hi.api.model.Transaction;
 import com.hi.api.repository.UserRepository;
+import com.hi.api.repository.TransactionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,6 +15,7 @@ import vn.payos.model.webhooks.Webhook;
 import vn.payos.model.webhooks.WebhookData;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -21,17 +24,27 @@ public class PaymentService {
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
 
     private final UserRepository userRepository;
+    private final TransactionRepository transactionRepository;
     private final PayOS payOS;
 
     @Value("${app.client-url}")
     private String clientUrl;
 
-    public PaymentService(UserRepository userRepository, PayOS payOS) {
+    public PaymentService(UserRepository userRepository, TransactionRepository transactionRepository, PayOS payOS) {
         this.userRepository = userRepository;
+        this.transactionRepository = transactionRepository;
         this.payOS = payOS;
     }
 
-    public String createCheckoutSession(User user, String priceId) throws Exception {
+    public String createCheckoutSession(User user, String priceId, String originUrl) throws Exception {
+        // Block double payment: if user already has an active subscription
+        if (user.getSubscription() != null && "active".equalsIgnoreCase(user.getSubscription().getStatus())) {
+            if (user.getSubscription().getCurrentPeriodEnd() != null && 
+                    user.getSubscription().getCurrentPeriodEnd().isAfter(Instant.now())) {
+                throw new IllegalArgumentException("Bạn đang sử dụng gói Premium hoạt động. Không thể tạo phiên thanh toán mới.");
+            }
+        }
+
         long amount = 49000L;
         String planName = "premium_monthly";
         if ("yearly".equalsIgnoreCase(priceId) || priceId.contains("yearly") || priceId.contains("399000") || priceId.contains("premium_yearly")) {
@@ -43,12 +56,18 @@ public class PaymentService {
         // We combine the current epoch seconds with a random 4-digit code.
         long orderCode = (System.currentTimeMillis() / 1000) * 10000 + (long) (Math.random() * 10000);
 
+        // Resolve client URL dynamically based on Request Origin Header, fallback to configured URL
+        String baseUrl = (originUrl != null && !originUrl.isEmpty()) ? originUrl : clientUrl;
+        if (baseUrl.endsWith("/")) {
+            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+        }
+
         CreatePaymentLinkRequest request = CreatePaymentLinkRequest.builder()
                 .orderCode(orderCode)
                 .amount(amount)
-                .description("HiPremium" + ("yearly".equalsIgnoreCase(planName) ? "Yearly" : "Monthly"))
-                .returnUrl(clientUrl + "/payment/success?orderCode=" + orderCode)
-                .cancelUrl(clientUrl + "/payment/cancel")
+                .description("HiPremium" + ("premium_yearly".equals(planName) ? "Yearly" : "Monthly"))
+                .returnUrl(baseUrl + "/payment/success?orderCode=" + orderCode)
+                .cancelUrl(baseUrl + "/payment/cancel")
                 .build();
 
         CreatePaymentLinkResponse response = payOS.paymentRequests().create(request);
@@ -61,6 +80,17 @@ public class PaymentService {
         user.getSubscription().setPlan(planName);
         user.getSubscription().setStatus("pending");
         userRepository.save(user);
+
+        // Create transaction log in history
+        Transaction transaction = new Transaction();
+        transaction.setUserId(user.getId());
+        transaction.setUserEmail(user.getEmail());
+        transaction.setOrderCode(orderCode);
+        transaction.setAmount(amount);
+        transaction.setPlan(planName);
+        transaction.setStatus("pending");
+        transaction.setDescription("HiPremium " + ("premium_yearly".equals(planName) ? "Yearly" : "Monthly"));
+        transactionRepository.save(transaction);
 
         log.info("Created PayOS payment link for user: {}, orderCode: {}, url: {}", user.getEmail(), orderCode, response.getCheckoutUrl());
         return response.getCheckoutUrl();
@@ -78,15 +108,33 @@ public class PaymentService {
             Optional<User> userOpt = userRepository.findByPayosOrderCode(orderCode);
             if (userOpt.isPresent()) {
                 User user = userOpt.get();
+                
+                // Update User Subscription State
                 user.getSubscription().setStatus("active");
-
-                // Auto calculate subscription period based on plan
                 String plan = user.getSubscription().getPlan();
                 int days = plan != null && plan.contains("yearly") ? 365 : 30;
                 Instant currentPeriodEnd = Instant.now().plus(java.time.Duration.ofDays(days));
                 user.getSubscription().setCurrentPeriodEnd(currentPeriodEnd);
-
                 userRepository.save(user);
+
+                // Update Transaction Status
+                Optional<Transaction> transOpt = transactionRepository.findByOrderCode(orderCode);
+                if (transOpt.isPresent()) {
+                    Transaction transaction = transOpt.get();
+                    transaction.setStatus("completed");
+                    transactionRepository.save(transaction);
+                } else {
+                    Transaction transaction = new Transaction();
+                    transaction.setUserId(user.getId());
+                    transaction.setUserEmail(user.getEmail());
+                    transaction.setOrderCode(orderCode);
+                    transaction.setAmount((long) data.getAmount());
+                    transaction.setPlan(plan);
+                    transaction.setStatus("completed");
+                    transaction.setDescription(data.getDescription());
+                    transactionRepository.save(transaction);
+                }
+
                 log.info("Successfully upgraded user {} to Premium. Expiration: {}", user.getEmail(), currentPeriodEnd);
             } else {
                 log.warn("User not found for PayOS orderCode: {}", orderCode);
@@ -98,7 +146,22 @@ public class PaymentService {
         if (user.getSubscription() != null) {
             user.getSubscription().setStatus("canceled");
             userRepository.save(user);
+            
+            // Mark corresponding transaction as canceled if it's pending
+            if (user.getSubscription().getPayosOrderCode() != null) {
+                Optional<Transaction> transOpt = transactionRepository.findByOrderCode(user.getSubscription().getPayosOrderCode());
+                if (transOpt.isPresent() && "pending".equalsIgnoreCase(transOpt.get().getStatus())) {
+                    Transaction transaction = transOpt.get();
+                    transaction.setStatus("canceled");
+                    transactionRepository.save(transaction);
+                }
+            }
             log.info("Canceled auto-renewal/active subscription status for user: {}", user.getEmail());
         }
     }
+
+    public List<Transaction> getPaymentHistory(User user) {
+        return transactionRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
+    }
 }
+

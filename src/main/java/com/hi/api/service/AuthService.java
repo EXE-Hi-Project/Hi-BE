@@ -292,7 +292,12 @@ public class AuthService {
         tokenRepository.save(resetToken);
 
         log.info("[FORGOT-PASSWORD] Đã lưu OTP token cho user: {}, gửi email...", email);
-        emailService.sendOtpEmail(user.getEmail(), user.getName(), otp);
+        try {
+            emailService.sendOtpEmail(user.getEmail(), user.getName(), otp);
+        } catch (Exception ex) {
+            log.error("[FORGOT-PASSWORD] Gửi email OTP thất bại cho {}: {}", email, ex.getMessage(), ex);
+            throw new IllegalArgumentException("Hệ thống gửi Email gặp sự cố (Chưa cấu hình Gmail App Password hoặc bị chặn). Vui lòng cấu hình MAIL_PASSWORD trong .env. Chi tiết lỗi: " + ex.getMessage());
+        }
     }
 
     public String verifyOtp(VerifyOtpRequest req) {
