@@ -85,7 +85,7 @@ public class AuthController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Lỗi xác thực Google: " + e.getMessage()));
+                    .body(Map.of("success", false, "message", "Lỗi xác thực Google"));
         }
     }
 

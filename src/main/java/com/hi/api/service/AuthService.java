@@ -112,12 +112,20 @@ public class AuthService {
 
         if (req.getCredential() != null && !req.getCredential().isBlank()) {
             // ID token flow
-            GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
-                    new NetHttpTransport(), GsonFactory.getDefaultInstance())
-                    .setAudience(Collections.singletonList(googleClientId))
-                    .build();
+            if (googleClientId == null || googleClientId.isBlank()) {
+                throw new IllegalStateException("Google client ID is not configured");
+            }
 
-            GoogleIdToken idToken = verifier.verify(req.getCredential());
+            GoogleIdToken idToken;
+            try {
+                GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
+                        new NetHttpTransport(), GsonFactory.getDefaultInstance())
+                        .setAudience(Collections.singletonList(googleClientId))
+                        .build();
+                idToken = verifier.verify(req.getCredential());
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Google token không hợp lệ");
+            }
             if (idToken == null)
                 throw new IllegalArgumentException("Google token không hợp lệ");
 
@@ -126,6 +134,9 @@ public class AuthService {
             email = payload.getEmail();
             name = (String) payload.get("name");
             picture = (String) payload.get("picture");
+            if (!Boolean.TRUE.equals(payload.getEmailVerified())) {
+                throw new IllegalArgumentException("Tài khoản Google chưa xác minh email");
+            }
         } else if (req.getAccessToken() != null && !req.getAccessToken().isBlank()) {
             // Access token flow — fetch userinfo
             String url = "https://www.googleapis.com/oauth2/v3/userinfo";
@@ -142,6 +153,9 @@ public class AuthService {
             throw new IllegalArgumentException("Thiếu Google credential");
         }
 
+        if (googleId == null || googleId.isBlank()) {
+            throw new IllegalArgumentException("Google token không hợp lệ");
+        }
         if (email == null || email.isBlank()) {
             throw new IllegalArgumentException("Tài khoản Google chưa có email hợp lệ");
         }
