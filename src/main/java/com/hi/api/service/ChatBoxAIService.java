@@ -50,7 +50,7 @@ public class ChatBoxAIService {
                 .system(systemMessage.getText())
                 .user(userMessage.getText())
                 .advisors(a ->
-                        a.param(ChatMemory.CONVERSATION_ID, 2))
+                        a.param(ChatMemory.CONVERSATION_ID, id))
                 .stream()
                 .content();
 
