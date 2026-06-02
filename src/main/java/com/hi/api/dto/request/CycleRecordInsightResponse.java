@@ -18,10 +18,47 @@ public class CycleRecordInsightResponse {
     LocalDate lastStartDate;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
-    LocalDate predictedNextStartDate;
+    LocalDate lastRecordedStartDate;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
-    LocalDate predictedNextEndDate;
+    LocalDate lastRecordedEndDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate estimatedCurrentCycleStartDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate estimatedPeriodStartDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate estimatedPeriodEndDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate estimatedNextStartDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate estimatedNextEndDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate estimatedOvulationDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate fertileWindowStartDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate fertileWindowEndDate;
+
+    Integer currentCycleDay;
+    String currentPhase;
+    String periodStatus;
+    Integer confirmedPeriodDay;
+    Integer estimatedCycleDay;
+    String estimatedPhase;
+    Integer periodDelayDays;
+    Integer daysUntilEstimatedPeriod;
+    Integer estimatedPeriodDay;
+    String predictionConfidence;
+    boolean hasOutliers;
+    List<String> warnings;
 
     Double symptomImpactScore;
     List<PhaseSymptomImpact> phaseSymptomImpacts;

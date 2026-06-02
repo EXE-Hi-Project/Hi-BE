@@ -2,155 +2,71 @@ package com.hi.api.repository;
 
 import com.hi.api.model.ChatMessage;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
-import org.springframework.data.domain.Example;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.mongodb.repository.MongoRepository;
-import org.springframework.data.repository.query.FluentQuery;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
-import java.util.Optional;
-import java.util.function.Function;
+
 @Repository
-public interface ChatBoxAIRepository extends MongoRepository<ChatMessage, String>, ChatMemoryRepository {
+public class ChatBoxAIRepository implements ChatMemoryRepository {
 
+    private static final int MAX_MEMORY_MESSAGES = 35;
 
-    @Override
-    default List<String> findConversationIds() {
-        return List.of();
+    private final SpringDataMongoChatRepository chatRepository;
+
+    public ChatBoxAIRepository(SpringDataMongoChatRepository chatRepository) {
+        this.chatRepository = chatRepository;
     }
 
     @Override
-    default List<Message> findByConversationId(String conversationId) {
-        return List.of();
+    public List<String> findConversationIds() {
+        return chatRepository.findDistinctUserIdBy();
     }
 
     @Override
-    default void saveAll(String conversationId, List<Message> messages) {
-
-
+    public List<Message> findByConversationId(String conversationId) {
+        return chatRepository.findByUserIdOrderByCreatedAtAsc(
+                        conversationId,
+                        PageRequest.of(0, MAX_MEMORY_MESSAGES)
+                )
+                .stream()
+                .map(this::toSpringAiMessage)
+                .toList();
     }
 
     @Override
-    default void deleteByConversationId(String conversationId) {
-
+    public void saveAll(String conversationId, List<Message> messages) {
+        List<ChatMessage> entities = messages.stream()
+                .map(message -> toChatMessage(conversationId, message))
+                .toList();
+        chatRepository.saveAll(entities);
     }
 
     @Override
-    default <S extends ChatMessage> S insert(S entity) {
-        return null;
+    public void deleteByConversationId(String conversationId) {
+        chatRepository.deleteByUserId(conversationId);
     }
 
-    @Override
-    default <S extends ChatMessage> List<S> insert(Iterable<S> entities) {
-        return List.of();
+    private Message toSpringAiMessage(ChatMessage chatMessage) {
+        String role = chatMessage.getRole();
+        if ("assistant".equalsIgnoreCase(role)) {
+            return new AssistantMessage(chatMessage.getContent());
+        }
+        if ("system".equalsIgnoreCase(role)) {
+            return new SystemMessage(chatMessage.getContent());
+        }
+        return new UserMessage(chatMessage.getContent());
     }
 
-    @Override
-    default <S extends ChatMessage> Optional<S> findOne(Example<S> example) {
-        return Optional.empty();
-    }
-
-    @Override
-    default <S extends ChatMessage> List<S> findAll(Example<S> example) {
-        return List.of();
-    }
-
-    @Override
-    default <S extends ChatMessage> List<S> findAll(Example<S> example, Sort sort) {
-        return List.of();
-    }
-
-    @Override
-    default <S extends ChatMessage> Page<S> findAll(Example<S> example, Pageable pageable) {
-        return null;
-    }
-
-    @Override
-    default <S extends ChatMessage> long count(Example<S> example) {
-        return 0;
-    }
-
-    @Override
-    default <S extends ChatMessage> boolean exists(Example<S> example) {
-        return false;
-    }
-
-    @Override
-    default <S extends ChatMessage, R> R findBy(Example<S> example, Function<FluentQuery.FetchableFluentQuery<S>, R> queryFunction) {
-        return null;
-    }
-
-    @Override
-    default <S extends ChatMessage> S save(S entity) {
-        return null;
-    }
-
-    @Override
-    default <S extends ChatMessage> List<S> saveAll(Iterable<S> entities) {
-        return List.of();
-    }
-
-    @Override
-    default Optional<ChatMessage> findById(String s) {
-        return Optional.empty();
-    }
-
-    @Override
-    default boolean existsById(String s) {
-        return false;
-    }
-
-    @Override
-    default List<ChatMessage> findAll() {
-        return List.of();
-    }
-
-    @Override
-    default List<ChatMessage> findAllById(Iterable<String> strings) {
-        return List.of();
-    }
-
-    @Override
-    default long count() {
-        return 0;
-    }
-
-    @Override
-    default void deleteById(String s) {
-
-    }
-
-    @Override
-    default void delete(ChatMessage entity) {
-
-    }
-
-    @Override
-    default void deleteAllById(Iterable<? extends String> strings) {
-
-    }
-
-    @Override
-    default void deleteAll(Iterable<? extends ChatMessage> entities) {
-
-    }
-
-    @Override
-    default void deleteAll() {
-
-    }
-
-    @Override
-    default List<ChatMessage> findAll(Sort sort) {
-        return List.of();
-    }
-
-    @Override
-    default Page<ChatMessage> findAll(Pageable pageable) {
-        return null;
+    private ChatMessage toChatMessage(String conversationId, Message message) {
+        ChatMessage entity = new ChatMessage();
+        entity.setUserId(conversationId);
+        entity.setRole(message.getMessageType().getValue());
+        entity.setContent(message.getText());
+        return entity;
     }
 }

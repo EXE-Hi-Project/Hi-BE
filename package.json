@@ -1,0 +1,10 @@
+{
+  "name": "@hi/api-java",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/run-maven.cjs spring-boot:run",
+    "test": "node scripts/run-maven.cjs test",
+    "build": "node scripts/run-maven.cjs clean package -DskipTests"
+  }
+}

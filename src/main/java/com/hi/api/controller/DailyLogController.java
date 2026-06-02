@@ -1,7 +1,9 @@
 package com.hi.api.controller;
 
 import com.hi.api.dto.request.UpsertDailyLogRequest;
+import com.hi.api.dto.request.UpsertDailyLogSymptomRequest;
 import com.hi.api.model.DailyLog;
+import com.hi.api.model.DailyLogSymptom;
 import com.hi.api.model.User;
 import com.hi.api.service.DailyLogService;
 import jakarta.validation.Valid;
@@ -57,5 +59,24 @@ public class DailyLogController {
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate logDate) {
         dailyLogService.deleteLog(user.getId(), logDate);
         return ResponseEntity.ok(Map.of("success", true, "message", "Đã xóa nhật ký"));
+    }
+
+    @PutMapping("/{logDate}/symptoms/{symptomId}")
+    public ResponseEntity<Map<String, Object>> upsertSymptom(
+            @AuthenticationPrincipal User user,
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate logDate,
+            @PathVariable Long symptomId,
+            @RequestBody UpsertDailyLogSymptomRequest req) {
+        DailyLogSymptom symptom = dailyLogService.upsertSymptom(user.getId(), logDate, symptomId, req);
+        return ResponseEntity.ok(Map.of("success", true, "symptom", symptom));
+    }
+
+    @DeleteMapping("/{logDate}/symptoms/{symptomId}")
+    public ResponseEntity<Map<String, Object>> deleteSymptom(
+            @AuthenticationPrincipal User user,
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate logDate,
+            @PathVariable Long symptomId) {
+        dailyLogService.deleteSymptom(user.getId(), logDate, symptomId);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Đã xóa triệu chứng"));
     }
 }

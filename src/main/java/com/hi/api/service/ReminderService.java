@@ -1,8 +1,7 @@
 package com.hi.api.service;
 
-import com.hi.api.model.Cycle;
+import com.hi.api.dto.request.CycleRecordInsightResponse;
 import com.hi.api.model.User;
-import com.hi.api.repository.CycleRepository;
 import com.hi.api.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,12 +17,12 @@ public class ReminderService {
     private static final Logger log = LoggerFactory.getLogger(ReminderService.class);
 
     private final UserRepository userRepository;
-    private final CycleRepository cycleRepository;
+    private final CycleRecordService cycleRecordService;
     private final NotificationService notificationService;
 
-    public ReminderService(UserRepository userRepository, CycleRepository cycleRepository, NotificationService notificationService) {
+    public ReminderService(UserRepository userRepository, CycleRecordService cycleRecordService, NotificationService notificationService) {
         this.userRepository = userRepository;
-        this.cycleRepository = cycleRepository;
+        this.cycleRecordService = cycleRecordService;
         this.notificationService = notificationService;
     }
 
@@ -36,13 +35,10 @@ public class ReminderService {
 
         int count = 0;
         for (User user : users) {
-            Cycle lastCycle = cycleRepository.findFirstByUserIdOrderByStartDateDesc(user.getId()).orElse(null);
-            if (lastCycle == null || lastCycle.getStartDate() == null) continue;
-
             try {
-                LocalDate lastStartDate = LocalDate.parse(lastCycle.getStartDate().substring(0, 10));
-                int cycleLength = lastCycle.getCycleLength() != null ? lastCycle.getCycleLength() : user.getDefaultCycleLength();
-                LocalDate nextPeriodDate = lastStartDate.plusDays(cycleLength);
+                CycleRecordInsightResponse insights = cycleRecordService.getInsights(user.getId());
+                LocalDate nextPeriodDate = insights.getEstimatedPeriodStartDate();
+                if (nextPeriodDate == null) continue;
 
                 int daysBefore = user.getReminderDaysBefore() != null ? user.getReminderDaysBefore() : 3;
                 LocalDate reminderDate = nextPeriodDate.minusDays(daysBefore);

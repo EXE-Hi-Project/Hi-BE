@@ -2,6 +2,7 @@ package com.hi.api.service;
 
 import com.hi.api.model.AdminAuditLog;
 import com.hi.api.model.User;
+import com.hi.api.model.Transaction;
 import com.hi.api.repository.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -20,11 +21,12 @@ import java.util.*;
 public class AdminService {
 
     private final UserRepository userRepository;
-    private final CycleRepository cycleRepository;
-    private final SymptomRepository symptomRepository;
+    private final CycleRecordRepository cycleRecordRepository;
+    private final DailyLogSymptomRepository dailyLogSymptomRepository;
     private final NotificationRepository notificationRepository;
     private final AdminAuditLogRepository auditLogRepository;
     private final ChatRepository chatRepository;
+    private final TransactionRepository transactionRepository;
     private final MongoTemplate mongoTemplate;
 
     @Value("${FINANCE_PAID_USER_RATE:0.15}")
@@ -48,16 +50,17 @@ public class AdminService {
     @Value("${FINANCE_MONTHLY_CHURN_RATE:0.04}")
     private double monthlyChurnRate;
 
-    public AdminService(UserRepository userRepository, CycleRepository cycleRepository,
-                        SymptomRepository symptomRepository, NotificationRepository notificationRepository,
+    public AdminService(UserRepository userRepository, CycleRecordRepository cycleRecordRepository,
+                        DailyLogSymptomRepository dailyLogSymptomRepository, NotificationRepository notificationRepository,
                         ChatRepository chatRepository, AdminAuditLogRepository auditLogRepository,
-                        MongoTemplate mongoTemplate) {
+                        TransactionRepository transactionRepository, MongoTemplate mongoTemplate) {
         this.userRepository = userRepository;
-        this.cycleRepository = cycleRepository;
-        this.symptomRepository = symptomRepository;
+        this.cycleRecordRepository = cycleRecordRepository;
+        this.dailyLogSymptomRepository = dailyLogSymptomRepository;
         this.notificationRepository = notificationRepository;
         this.chatRepository = chatRepository;
         this.auditLogRepository = auditLogRepository;
+        this.transactionRepository = transactionRepository;
         this.mongoTemplate = mongoTemplate;
     }
 
@@ -86,8 +89,8 @@ public class AdminService {
         long usersFemale = userRepository.countByGender("female");
         long usersMale = userRepository.countByGender("male");
         long adminsTotal = userRepository.countByRole("admin");
-        long cyclesTotal = cycleRepository.count();
-        long symptomsTotal = symptomRepository.count();
+        long cyclesTotal = cycleRecordRepository.count();
+        long symptomsTotal = dailyLogSymptomRepository.count();
         long notificationsTotal = notificationRepository.count();
         long unreadNotifications = notificationRepository.countByRead(false);
         long chatMessagesTotal = chatRepository.count();
@@ -158,6 +161,125 @@ public class AdminService {
         result.put("financialReport", financialReport);
         result.put("monthlyFinancials", monthlyFinancials);
         result.put("recentUsers", recentUsers);
+
+        // PayOS Transactions Aggregation
+        List<Transaction> allTransactions = transactionRepository.findAll();
+        long totalRevenueVnd = 0;
+        long completedOrdersCount = 0;
+        long totalOrdersCount = allTransactions.size();
+
+        Map<String, Long> statusBreakdown = new HashMap<>();
+        statusBreakdown.put("completed", 0L);
+        statusBreakdown.put("pending", 0L);
+        statusBreakdown.put("canceled", 0L);
+
+        for (Transaction tx : allTransactions) {
+            String status = tx.getStatus() != null ? tx.getStatus().toLowerCase() : "pending";
+            if ("completed".equals(status)) {
+                totalRevenueVnd += tx.getAmount() != null ? tx.getAmount() : 0L;
+                completedOrdersCount++;
+                statusBreakdown.put("completed", statusBreakdown.get("completed") + 1);
+            } else if ("pending".equals(status)) {
+                statusBreakdown.put("pending", statusBreakdown.get("pending") + 1);
+            } else {
+                statusBreakdown.put("canceled", statusBreakdown.get("canceled") + 1);
+            }
+        }
+
+        List<Transaction> recentTransactions = allTransactions.stream()
+                .sorted((a, b) -> {
+                    Instant ta = a.getCreatedAt();
+                    Instant tb = b.getCreatedAt();
+                    if (ta == null && tb == null) return 0;
+                    if (ta == null) return 1;
+                    if (tb == null) return -1;
+                    return tb.compareTo(ta); // Descending
+                })
+                .limit(50)
+                .toList();
+
+        Map<String, Object> payosReport = new LinkedHashMap<>();
+        payosReport.put("totalRevenueVnd", totalRevenueVnd);
+        payosReport.put("completedOrdersCount", completedOrdersCount);
+        payosReport.put("totalOrdersCount", totalOrdersCount);
+        payosReport.put("statusBreakdown", statusBreakdown);
+        payosReport.put("transactions", recentTransactions);
+
+        result.put("payosReport", payosReport);
+
+        // 1. System Mood Index breakdown
+        var groupMoodStage = new org.bson.Document("$group",
+                new org.bson.Document("_id", "$moodScore")
+                        .append("count", new org.bson.Document("$sum", 1)));
+        var moodPipeline = java.util.List.of(groupMoodStage);
+        var moodResults = mongoTemplate.getCollection("daily_logs")
+                .aggregate(moodPipeline, org.bson.Document.class);
+
+        long moodVeryBad = 0; // 1
+        long moodBad = 0;     // 2
+        long moodNormal = 0;  // 3
+        long moodGood = 0;    // 4
+        long moodVeryGood = 0;// 5
+
+        for (org.bson.Document doc : moodResults) {
+            Object idVal = doc.get("_id");
+            Number countNum = doc.get("count", Number.class);
+            long count = countNum != null ? countNum.longValue() : 0L;
+            if (idVal instanceof Number n) {
+                int val = n.intValue();
+                switch (val) {
+                    case 1 -> moodVeryBad += count;
+                    case 2 -> moodBad += count;
+                    case 3 -> moodNormal += count;
+                    case 4 -> moodGood += count;
+                    case 5 -> moodVeryGood += count;
+                    default -> moodNormal += count;
+                }
+            }
+        }
+
+        List<Map<String, Object>> moodDistribution = new ArrayList<>();
+        moodDistribution.add(Map.of("name", "Cáu kỉnh", "value", moodVeryBad, "color", "#f87171")); // Red/Coral
+        moodDistribution.add(Map.of("name", "Mệt mỏi", "value", moodBad, "color", "#fb923c"));   // Orange
+        moodDistribution.add(Map.of("name", "Bình thường", "value", moodNormal, "color", "#94a3b8")); // Slate
+        moodDistribution.add(Map.of("name", "Thoải mái", "value", moodGood, "color", "#a78bfa"));   // Purple
+        moodDistribution.add(Map.of("name", "Vui vẻ", "value", moodVeryGood, "color", "#e9638f"));  // Hi Pink
+
+        result.put("moodDistribution", moodDistribution);
+
+        // 2. Chat Hourly Traffic
+        var groupHourStage = new org.bson.Document("$group",
+                new org.bson.Document("_id", new org.bson.Document("$hour", "$createdAt"))
+                        .append("count", new org.bson.Document("$sum", 1)));
+        var sortHourStage = new org.bson.Document("$sort", new org.bson.Document("_id", 1));
+        var hourlyPipeline = java.util.List.of(groupHourStage, sortHourStage);
+        var hourlyResults = mongoTemplate.getCollection("chats")
+                .aggregate(hourlyPipeline, org.bson.Document.class);
+
+        long[] hourlyTraffic = new long[24];
+        long totalHourlyChats = 0;
+        for (org.bson.Document doc : hourlyResults) {
+            Number hourNum = doc.get("_id", Number.class);
+            Number countNum = doc.get("count", Number.class);
+            if (hourNum != null && countNum != null) {
+                int hour = hourNum.intValue();
+                // MongoDB $hour outputs UTC. Adjusting to Vietnam Time (UTC+7)
+                int vnHour = (hour + 7) % 24;
+                hourlyTraffic[vnHour] = countNum.longValue();
+                totalHourlyChats += countNum.longValue();
+            }
+        }
+
+        List<Map<String, Object>> hourlyChatTraffic = new ArrayList<>();
+        for (int h = 0; h < 24; h++) {
+            Map<String, Object> point = new LinkedHashMap<>();
+            point.put("hour", String.format("%02d:00", h));
+            point.put("queries", hourlyTraffic[h]);
+            hourlyChatTraffic.add(point);
+        }
+
+        result.put("hourlyChatTraffic", hourlyChatTraffic);
+
         return result;
     }
 

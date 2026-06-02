@@ -286,27 +286,29 @@ flowchart LR
 
 1. User nữ hoàn thành onboarding hoặc mở trang chu kỳ.
 2. Nếu onboarding có ngày kỳ kinh gần nhất, BE tạo cycle đầu tiên.
-3. FE gọi `GET /api/cycles` để lấy danh sách chu kỳ.
+3. FE gọi `GET /api/cycle-records` để lấy danh sách chu kỳ.
 4. User tạo chu kỳ mới hoặc chỉnh sửa chu kỳ hiện tại.
-5. FE gọi `POST /api/cycles` hoặc `PUT /api/cycles/:id`.
+5. FE gọi `POST /api/cycle-records` hoặc `PUT /api/cycle-records/:id`.
 6. BE validate `startDate`, `cycleLength`, `periodLength` và ownership.
 7. BE lưu dữ liệu chu kỳ theo user.
-8. BE/FE tính ngày hiện tại trong chu kỳ, kỳ kinh tiếp theo, cửa sổ rụng trứng và fertility window.
+8. BE tính ngày hiện tại trong chu kỳ, kỳ kinh tiếp theo, cửa sổ rụng trứng và fertility window; FE chỉ hiển thị insights.
 9. FE hiển thị dữ liệu trên dashboard, calendar và CyclesPage.
-10. User có thể xóa chu kỳ, FE gọi `DELETE /api/cycles/:id` sau khi confirm.
+10. User có thể xóa chu kỳ, FE gọi `DELETE /api/cycle-records/:id` sau khi confirm.
 
 | ID | Layer | Task | Status | Mức | Deadline | Mô tả | Hướng dẫn |
 |---|---|---|---|---:|---|---|---|
 | CYCLE-BE-01 | BE | Cycle model | [x] | M | Done | Lưu chu kỳ theo user | Field chính: startDate, cycleLength, periodLength |
-| CYCLE-BE-02 | BE | API list/create/update/delete cycle | [x] | M | Done | CRUD `/api/cycles` | Ownership theo user |
-| CYCLE-FE-01 | FE | Dashboard nữ đọc cycle thật | [x] | M | Done | Không còn fake cycle | Query `/cycles` |
+| CYCLE-BE-02 | BE | API list/create/update/delete cycle | [x] | M | Done | CRUD `/api/cycle-records` | Ownership theo user |
+| CYCLE-FE-01 | FE | Dashboard nữ đọc cycle thật | [x] | M | Done | Không còn fake cycle | Query `/cycle-records` + insights |
 | CYCLE-FE-02 | FE | Dashboard nữ lưu cycle thật | [x] | M | Done | Panel cycle gọi API | Invalidate `['cycles']` |
 | CYCLE-FE-03 | FE | Calendar/CyclesPage đọc API thật | [x] | M | Done | Không dùng fake data | Empty/loading state cơ bản |
-| CYCLE-BE-03 | BE | Validate `startDate` không ở tương lai | [ ] | S | 21/05/2026 | Chặn ngày không hợp lệ | Validate create/update |
-| CYCLE-BE-04 | BE | Validate `cycleLength` 21-35 | [ ] | S | 21/05/2026 | Rule phổ biến cho chu kỳ | Cho phép config sau nếu cần |
-| CYCLE-BE-05 | BE | Validate `periodLength` 2-7 | [ ] | S | 21/05/2026 | Rule phổ biến cho kỳ kinh | Return `400` nếu sai |
-| CYCLE-BE-06 | BE | Tạo cycle từ onboarding | [ ] | M | 22/05/2026 | Nếu có `lastPeriodDate`, tạo cycle đầu tiên | Chỉ tạo nếu user chưa có cycle |
-| CYCLE-BE-07 | BE | API dự đoán ngày kỳ kinh tiếp theo | [ ] | M | 31/05/2026 | Tính next period/ovulation/fertility window | Có thể trả trong cycle summary endpoint |
+| CYCLE-BE-03 | BE | Validate `startDate` không ở tương lai | [x] | S | Done | Chặn ngày không hợp lệ | Validate create/update |
+| CYCLE-BE-04 | BE | Validate `cycleLength` và cảnh báo outlier | [x] | S | Done | Lưu 10-90, cảnh báo ngoài 21-35 | Loại outlier khỏi trung bình khi đủ dữ liệu |
+| CYCLE-BE-05 | BE | Validate `periodLength` và cảnh báo outlier | [x] | S | Done | Lưu 1-30, cảnh báo ngoài 2-7 | Không làm mất dữ liệu bất thường |
+| CYCLE-BE-06 | BE | Tạo cycle từ onboarding | [x] | M | Done | Nếu có `lastPeriodDate`, upsert cycle đầu tiên | Unique `(userId, startDate)` |
+| CYCLE-BE-07 | BE | API dự đoán ngày kỳ kinh tiếp theo | [x] | M | Done | Tính next period/ovulation/fertility window | `GET /api/cycle-records/insights` |
+| CYCLE-BE-08 | BE | Phân biệt kỳ đã xác nhận và kỳ dự đoán | [x] | M | Done | Không roll-forward thành kỳ thật; trả `CONFIRMED`, `UPCOMING`, `PREDICTED`, `DELAYED` | `GET /api/cycle-records/insights` |
+| CYCLE-FE-08 | FE | Chỉnh kỳ kinh trực tiếp trên dashboard | [x] | M | Done | Inline edit; log lượng kinh có toggle xác nhận Ngày 1 | Female dashboard |
 | CYCLE-FE-04 | FE | Giao diện sửa/xóa cycle đầy đủ | [ ] | L | 22/05/2026 | CyclesPage cần edit/delete thật | Modal edit, confirm delete |
 | CYCLE-FE-05 | FE | Calendar hiển thị period/fertile/ovulation | [ ] | L | 31/05/2026 | Visual hóa ngày quan trọng | Dùng data từ API hoặc helper FE |
 | CYCLE-FE-06 | FE | Empty/error/loading state cycle | [ ] | M | 22/05/2026 | Không crash khi API lỗi/rỗng | Retry, toast, skeleton |
@@ -319,24 +321,24 @@ flowchart LR
 **Khi hoàn thiện, flow đúng sẽ là:**
 
 1. User mở SymptomsPage hoặc panel triệu chứng ở dashboard nữ.
-2. FE gọi `GET /api/symptoms` để lấy triệu chứng đã ghi.
+2. FE gọi `GET /api/daily-logs` và `GET /api/symptom-dictionaries`.
 3. User chọn triệu chứng, mức độ, ngày và ghi chú.
-4. FE validate input và gọi `POST /api/symptoms`.
+4. FE validate input và gọi `PUT /api/daily-logs/:date/symptoms/:symptomId`.
 5. BE validate name, severity, date và ownership.
 6. BE lưu symptom theo user, ngày và cycle liên quan nếu xác định được.
 7. FE invalidate query và cập nhật thống kê triệu chứng.
-8. User có thể sửa symptom, FE gọi `PUT /api/symptoms/:id`.
-9. User có thể xóa symptom, FE gọi `DELETE /api/symptoms/:id` sau khi confirm.
+8. User có thể sửa symptom bằng cùng endpoint upsert.
+9. User có thể xóa symptom, FE gọi `DELETE /api/daily-logs/:date/symptoms/:symptomId`.
 10. Dashboard/CyclesPage dùng dữ liệu symptom thật để thống kê.
 
 | ID | Layer | Task | Status | Mức | Deadline | Mô tả | Hướng dẫn |
 |---|---|---|---|---:|---|---|---|
-| SYMPTOM-BE-01 | BE | Symptom model | [x] | M | Done | Lưu symptom theo user | Field: name, severity, date, notes |
-| SYMPTOM-BE-02 | BE | API list/create/delete symptom | [x] | M | Done | Route `/api/symptoms` | Protected route |
+| SYMPTOM-BE-01 | BE | Daily log + symptom dictionary model | [x] | M | Done | Lưu symptom theo user và ngày | `daily_logs`, `daily_log_symptoms`, `symptom_dictionaries` |
+| SYMPTOM-BE-02 | BE | API list/create/delete symptom | [x] | M | Done | Route `/api/daily-logs` | Protected route |
 | SYMPTOM-FE-01 | FE | SymptomsPage dùng API thật | [x] | M | Done | Không còn fake data | Query/mutation thật |
-| SYMPTOM-FE-02 | FE | Dashboard nữ lưu symptom thật | [x] | M | Done | Panel triệu chứng gọi `/symptoms` | Invalidate `['symptoms']` |
+| SYMPTOM-FE-02 | FE | Dashboard nữ lưu symptom thật | [x] | M | Done | Panel triệu chứng gọi `/daily-logs` | Invalidate `['daily-logs']` |
 | SYMPTOM-FE-03 | FE | CyclesPage thống kê symptom từ API | [x] | M | Done | Dùng dữ liệu thật | Không hardcode stats |
-| SYMPTOM-BE-03 | BE | API update symptom | [ ] | M | 22/05/2026 | Cho phép chỉnh symptom | `PUT /api/symptoms/:id` |
+| SYMPTOM-BE-03 | BE | API update symptom | [x] | M | Done | Cho phép chỉnh symptom | `PUT /api/daily-logs/:date/symptoms/:symptomId` |
 | SYMPTOM-BE-04 | BE | Validate severity/date/name | [ ] | M | 22/05/2026 | Chặn name rỗng, date tương lai, severity sai | Validate create/update |
 | SYMPTOM-BE-05 | BE | Gắn symptom với cycle/date rõ ràng | [ ] | L | 31/05/2026 | Thống kê theo chu kỳ chính xác hơn | Lưu `cycleId` hoặc tính theo date |
 | SYMPTOM-FE-04 | FE | Giao diện sửa symptom | [ ] | M | 24/05/2026 | Edit severity/note/date | Modal hoặc inline edit |
@@ -361,7 +363,7 @@ flowchart LR
 
 | ID | Layer | Task | Status | Mức | Deadline | Mô tả | Hướng dẫn |
 |---|---|---|---|---:|---|---|---|
-| FDASH-FE-01 | FE | Dashboard nữ dùng API cycle thật | [x] | M | Done | Hiển thị phase/day từ cycle | Dùng query `/cycles` |
+| FDASH-FE-01 | FE | Dashboard nữ dùng API cycle thật | [x] | M | Done | Hiển thị phase/day từ cycle | Dùng query `/cycle-records` + insights |
 | FDASH-FE-02 | FE | Dashboard nữ lưu cycle thật | [x] | M | Done | Panel cycle mutation API | Có success state |
 | FDASH-FE-03 | FE | Dashboard nữ lưu symptom thật | [x] | M | Done | Panel symptom mutation API | Có toast lỗi |
 | FDASH-FE-04 | FE | Dashboard nữ chat API thật | [x] | M | Done | Không còn reply fake | Mutation `/chat` |
