@@ -39,6 +39,8 @@ public class DailyLog {
 
     private FlowIntensity flowIntensity = FlowIntensity.NONE;
 
+    private Boolean hasClots = false;
+
     private Integer moodScore;
 
     private String notes = "";

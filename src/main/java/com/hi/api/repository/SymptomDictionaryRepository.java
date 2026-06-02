@@ -11,4 +11,5 @@ public interface SymptomDictionaryRepository extends MongoRepository<SymptomDict
     List<SymptomDictionary> findByActiveTrueOrderByCategoryAscNameAsc();
     List<SymptomDictionary> findByCategoryAndActiveTrueOrderByNameAsc(SymptomCategory category);
     Optional<SymptomDictionary> findByIdAndActiveTrue(Long id);
+    Optional<SymptomDictionary> findByNameIgnoreCase(String name);
 }

@@ -6,6 +6,7 @@ import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.index.Indexed;
@@ -33,6 +34,15 @@ public class DailyLogSymptom {
     private Long symptomId;
 
     private SymptomSeverity severity = SymptomSeverity.MILD;
+
+    @Transient
+    private String symptomName;
+
+    @Transient
+    private SymptomCategory category;
+
+    @Transient
+    private String iconUrl;
 
     @CreatedDate
     private Instant createdAt;

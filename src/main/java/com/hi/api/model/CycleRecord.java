@@ -7,6 +7,8 @@ import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -16,6 +18,9 @@ import java.time.LocalDate;
 @Data
 @NoArgsConstructor
 @Document(collection = "cycle_records")
+@CompoundIndexes({
+        @CompoundIndex(name = "cycle_record_user_start_idx", def = "{ 'userId': 1, 'startDate': 1 }", unique = true)
+})
 public class CycleRecord {
 
     @Id

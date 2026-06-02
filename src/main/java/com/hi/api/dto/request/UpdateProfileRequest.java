@@ -35,12 +35,12 @@ public class UpdateProfileRequest {
     @Size(max = 10, message = "Tối đa 10 mục tiêu")
     private List<String> goals;
 
-    @Min(value = 20, message = "Độ dài chu kỳ phải từ 20 đến 45 ngày")
-    @Max(value = 45, message = "Độ dài chu kỳ phải từ 20 đến 45 ngày")
+    @Min(value = 10, message = "Độ dài chu kỳ phải từ 10 đến 90 ngày")
+    @Max(value = 90, message = "Độ dài chu kỳ phải từ 10 đến 90 ngày")
     private Integer defaultCycleLength;
 
-    @Min(value = 2, message = "Độ dài kỳ kinh phải từ 2 đến 10 ngày")
-    @Max(value = 10, message = "Độ dài kỳ kinh phải từ 2 đến 10 ngày")
+    @Min(value = 1, message = "Độ dài kỳ kinh phải từ 1 đến 30 ngày")
+    @Max(value = 30, message = "Độ dài kỳ kinh phải từ 1 đến 30 ngày")
     private Integer defaultPeriodLength;
 
     @Pattern(regexp = "^\\d{4}-\\d{2}-\\d{2}$", message = "Ngày bắt đầu kỳ kinh phải có định dạng yyyy-MM-dd")

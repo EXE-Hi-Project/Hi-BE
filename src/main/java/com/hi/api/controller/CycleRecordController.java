@@ -54,7 +54,7 @@ public class CycleRecordController {
     public ResponseEntity<Map<String, Object>> updateCycleRecord(
             @AuthenticationPrincipal User user,
             @PathVariable Long id,
-            @RequestBody UpdateCycleRecordRequest req) {
+            @Valid @RequestBody UpdateCycleRecordRequest req) {
         CycleRecord record = cycleRecordService.updateCycleRecord(user.getId(), id, req);
         return ResponseEntity.ok(Map.of("success", true, "cycleRecord", record));
     }

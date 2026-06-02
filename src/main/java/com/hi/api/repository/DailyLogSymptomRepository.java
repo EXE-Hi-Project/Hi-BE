@@ -11,4 +11,5 @@ public interface DailyLogSymptomRepository extends MongoRepository<DailyLogSympt
     List<DailyLogSymptom> findByDailyLogIdIn(List<Long> dailyLogIds);
     Optional<DailyLogSymptom> findByDailyLogIdAndSymptomId(Long dailyLogId, Long symptomId);
     void deleteByDailyLogId(Long dailyLogId);
+    void deleteByDailyLogIdAndSymptomId(Long dailyLogId, Long symptomId);
 }

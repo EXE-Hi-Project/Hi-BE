@@ -6,13 +6,16 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.Data;
 
-import java.util.ArrayList;
 import java.util.List;
 
 @Data
 public class UpsertDailyLogRequest {
 
     private FlowIntensity flowIntensity = FlowIntensity.NONE;
+
+    private Boolean confirmPeriodStart = false;
+
+    private Boolean hasClots = false;
 
     @Min(value = 1, message = "Mood score phải từ 1 đến 5")
     @Max(value = 5, message = "Mood score phải từ 1 đến 5")
@@ -21,5 +24,5 @@ public class UpsertDailyLogRequest {
     private String notes;
 
     @Valid
-    private List<DailyLogSymptomRequest> symptoms = new ArrayList<>();
+    private List<DailyLogSymptomRequest> symptoms;
 }

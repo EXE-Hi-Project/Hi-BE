@@ -2,9 +2,9 @@ package com.hi.api.service;
 
 import com.hi.api.dto.request.ConnectPartnerRequest;
 import com.hi.api.dto.request.UpdateProfileRequest;
-import com.hi.api.model.Cycle;
+import com.hi.api.model.CycleRecord;
 import com.hi.api.model.User;
-import com.hi.api.repository.CycleRepository;
+import com.hi.api.repository.CycleRecordRepository;
 import com.hi.api.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,14 +19,17 @@ import java.util.Map;
 public class UserService {
 
     private final UserRepository userRepository;
-    private final CycleRepository cycleRepository;
+    private final CycleRecordRepository cycleRecordRepository;
+    private final CycleRecordService cycleRecordService;
     private final NotificationService notificationService;
 
     public UserService(UserRepository userRepository,
-                       CycleRepository cycleRepository,
+                       CycleRecordRepository cycleRecordRepository,
+                       CycleRecordService cycleRecordService,
                        NotificationService notificationService) {
         this.userRepository = userRepository;
-        this.cycleRepository = cycleRepository;
+        this.cycleRecordRepository = cycleRecordRepository;
+        this.cycleRecordService = cycleRecordService;
         this.notificationService = notificationService;
     }
 
@@ -56,7 +59,11 @@ public class UserService {
         if (req.getPartnerNotifications() != null) user.setPartnerNotifications(req.getPartnerNotifications());
         if (req.getOnboardingCompleted() != null) user.setOnboardingCompleted(req.getOnboardingCompleted());
 
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+        if ("female".equalsIgnoreCase(saved.getGender()) && saved.getLastPeriodDate() != null) {
+            cycleRecordService.upsertInitialFromProfile(saved);
+        }
+        return saved;
     }
 
     private void validateOnboardingPayload(UpdateProfileRequest req, String effectiveGender) {
@@ -189,13 +196,17 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
 
         if (user.getPartnerId() == null) {
-            return Map.of("partner", null, "cycles", List.of());
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("partner", null);
+            response.put("cycles", List.of());
+            response.put("insights", null);
+            return response;
         }
 
         User partner = userRepository.findById(user.getPartnerId())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy dữ liệu đối tác"));
 
-        List<Cycle> cycles = cycleRepository.findByUserIdOrderByStartDateDesc(partner.getId());
+        List<CycleRecord> cycles = cycleRecordRepository.findByUserIdOrderByStartDateDesc(partner.getId());
         Map<String, Object> partnerProfile = new LinkedHashMap<>();
         partnerProfile.put("id", partner.getId());
         partnerProfile.put("name", partner.getName() != null ? partner.getName() : "");
@@ -204,6 +215,7 @@ public class UserService {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("partner", partnerProfile);
         response.put("cycles", cycles);
+        response.put("insights", cycleRecordService.getInsights(partner.getId()));
         return response;
     }
 }

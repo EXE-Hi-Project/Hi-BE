@@ -15,7 +15,6 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/symptom-dictionaries")
-@PreAuthorize("hasRole('ADMIN')")
 public class SymptomDictionaryController {
 
     private final SymptomDictionaryService symptomDictionaryService;
@@ -31,18 +30,21 @@ public class SymptomDictionaryController {
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> create(@Valid @RequestBody UpsertSymptomDictionaryRequest req) {
         SymptomDictionary symptom = symptomDictionaryService.create(req);
         return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("success", true, "symptom", symptom));
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> update(@PathVariable Long id, @Valid @RequestBody UpsertSymptomDictionaryRequest req) {
         SymptomDictionary symptom = symptomDictionaryService.update(id, req);
         return ResponseEntity.ok(Map.of("success", true, "symptom", symptom));
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> delete(@PathVariable Long id) {
         symptomDictionaryService.delete(id);
         return ResponseEntity.ok(Map.of("success", true, "message", "Đã xóa triệu chứng mẫu"));

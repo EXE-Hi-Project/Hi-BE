@@ -14,4 +14,5 @@ public interface CycleRecordRepository extends MongoRepository<CycleRecord, Long
     List<CycleRecord> findByUserIdAndStartDateGreaterThanEqualOrderByStartDateDesc(String userId, LocalDate from);
     List<CycleRecord> findByUserIdAndStartDateLessThanEqualOrderByStartDateDesc(String userId, LocalDate to);
     Optional<CycleRecord> findByIdAndUserId(Long id, String userId);
+    Optional<CycleRecord> findByUserIdAndStartDate(String userId, LocalDate startDate);
 }
