@@ -39,8 +39,9 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
         }
         for (SeedItem item : defaultItems()) {
             repository.findByNameIgnoreCase(item.name()).ifPresentOrElse(dictionary -> {
-                if (!item.category().equals(dictionary.getCategory())) {
+                if (!item.category().equals(dictionary.getCategory()) || !Boolean.TRUE.equals(dictionary.getActive())) {
                     dictionary.setCategory(item.category());
+                    dictionary.setActive(true);
                     repository.save(dictionary);
                 }
             }, () -> {
@@ -53,6 +54,12 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
                 repository.save(dictionary);
             });
         }
+        repository.findByNameIgnoreCase("Tâm trạng thay đổi").ifPresent(dictionary -> {
+            if (Boolean.TRUE.equals(dictionary.getActive())) {
+                dictionary.setActive(false);
+                repository.save(dictionary);
+            }
+        });
     }
 
     public static List<SeedItem> defaultItems() {

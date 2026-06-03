@@ -38,7 +38,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             if (token != null && jwtUtil.validateToken(token)) {
                 String userId = jwtUtil.getUserIdFromToken(token);
                 User user = userRepository.findById(userId).orElse(null);
-                if (user != null) {
+                String accountStatus = user != null && user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE";
+                if (user != null && !"LOCKED".equalsIgnoreCase(accountStatus) && !"DELETED".equalsIgnoreCase(accountStatus)) {
                     String role = user.getRole() != null ? user.getRole() : "user";
                     var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role.toUpperCase()));
                     var auth = new UsernamePasswordAuthenticationToken(user, null, authorities);

@@ -38,6 +38,11 @@ public class User {
     private String gender;
     private String avatar = "";
 
+    private String accountStatus = "ACTIVE";
+    private String accountStatusReason;
+    private Instant accountStatusUpdatedAt;
+    private String accountStatusUpdatedBy;
+
     // Onboarding
     private String birthDate;
     private Double height;

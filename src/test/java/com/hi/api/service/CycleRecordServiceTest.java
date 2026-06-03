@@ -52,7 +52,7 @@ class CycleRecordServiceTest {
     }
 
     @Test
-    void getInsightsShowsPredictedWindowWithoutCreatingCycle() {
+    void getInsightsShowsDelayAsSoonAsEstimatedPeriodStartsWithoutCreatingCycle() {
         String userId = "female-1";
         CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(29), 28, 5);
         User user = new User();
@@ -68,10 +68,11 @@ class CycleRecordServiceTest {
 
         CycleRecordInsightResponse insights = service.getInsights(userId);
 
-        assertEquals("PREDICTED", insights.getPeriodStatus());
+        assertEquals("DELAYED", insights.getPeriodStatus());
         assertEquals(LocalDate.now().minusDays(1), insights.getEstimatedPeriodStartDate());
-        assertEquals(2, insights.getEstimatedCycleDay());
-        assertEquals(2, insights.getEstimatedPeriodDay());
+        assertEquals(null, insights.getEstimatedCycleDay());
+        assertEquals(null, insights.getEstimatedPeriodDay());
+        assertEquals(1, insights.getPeriodDelayDays());
         assertEquals(null, insights.getDaysUntilEstimatedPeriod());
         assertEquals(null, insights.getConfirmedPeriodDay());
         assertEquals("LOW", insights.getPredictionConfidence());
@@ -125,6 +126,28 @@ class CycleRecordServiceTest {
         assertEquals("UPCOMING", insights.getPeriodStatus());
         assertEquals(3, insights.getDaysUntilEstimatedPeriod());
         assertEquals(null, insights.getEstimatedPeriodDay());
+        assertEquals("LOW", insights.getFertilityStatus());
+    }
+
+    @Test
+    void getInsightsMarksHighFertilityInsideEstimatedWindow() {
+        String userId = "female-fertile";
+        CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(13), 28, 5);
+        User user = new User();
+        user.setId(userId);
+        user.setDefaultCycleLength(28);
+        user.setDefaultPeriodLength(5);
+
+        when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
+                .thenReturn(List.of(record));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of());
+
+        CycleRecordInsightResponse insights = service.getInsights(userId);
+
+        assertEquals("HIGH", insights.getFertilityStatus());
+        assertEquals(LocalDate.now().plusDays(1), insights.getEstimatedOvulationDate());
     }
 
     @Test
@@ -190,6 +213,20 @@ class CycleRecordServiceTest {
                 .thenReturn(Optional.empty());
 
         assertThrows(IllegalArgumentException.class, () -> service.createCycleRecord("female-future-end", request));
+    }
+
+    @Test
+    void createCycleRejectsOverlappingPeriodRange() {
+        String userId = "female-overlap";
+        CycleRecord existing = cycleRecord(userId, LocalDate.now().minusDays(10), 28, 5);
+        existing.setEndDate(LocalDate.now().minusDays(6));
+        when(cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId)).thenReturn(List.of(existing));
+
+        com.hi.api.dto.request.CreateCycleRecordRequest request = new com.hi.api.dto.request.CreateCycleRecordRequest();
+        request.setStartDate(LocalDate.now().minusDays(8));
+        request.setEndDate(LocalDate.now().minusDays(4));
+
+        assertThrows(ConflictException.class, () -> service.createCycleRecord(userId, request));
     }
 
     @Test
