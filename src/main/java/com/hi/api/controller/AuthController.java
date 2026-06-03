@@ -95,14 +95,14 @@ public class AuthController {
             Map<String, Object> payload = authService.facebookAuth(req);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
-            response.put("message", "ÄÄƒng nháº­p Facebook thÃ nh cÃ´ng");
+            response.put("message", "Đăng nhập Facebook thành công");
             response.put("data", payload);
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Lá»—i xÃ¡c thá»±c Facebook: " + e.getMessage()));
+                    .body(Map.of("success", false, "message", "Lỗi xác thực Facebook: " + e.getMessage()));
         }
     }
 

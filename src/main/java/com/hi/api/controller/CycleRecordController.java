@@ -10,6 +10,7 @@ import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Page;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -40,6 +41,24 @@ public class CycleRecordController {
     public ResponseEntity<Map<String, Object>> getInsights(@AuthenticationPrincipal User user) {
         CycleRecordInsightResponse insights = cycleRecordService.getInsights(user.getId());
         return ResponseEntity.ok(Map.of("success", true, "insights", insights));
+    }
+
+    @GetMapping("/history")
+    public ResponseEntity<Map<String, Object>> getCycleRecordHistory(
+            @AuthenticationPrincipal User user,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int limit) {
+        int safePage = Math.max(page, 0);
+        int safeLimit = Math.min(Math.max(limit, 1), 100);
+        Page<CycleRecord> records = cycleRecordService.getCycleRecordHistory(user.getId(), safePage, safeLimit);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "cycleRecords", records.getContent(),
+                "total", records.getTotalElements(),
+                "page", records.getNumber(),
+                "limit", records.getSize(),
+                "hasMore", records.hasNext()
+        ));
     }
 
     @PostMapping

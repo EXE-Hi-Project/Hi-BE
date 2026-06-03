@@ -70,6 +70,16 @@ public class AuthService {
         return java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
     }
 
+    private void assertAccountCanAuthenticate(User user) {
+        String status = user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE";
+        if ("LOCKED".equalsIgnoreCase(status)) {
+            throw new IllegalArgumentException("Tài khoản của bạn đang bị khóa. Vui lòng liên hệ quản trị viên.");
+        }
+        if ("DELETED".equalsIgnoreCase(status)) {
+            throw new IllegalArgumentException("Tài khoản không còn hoạt động.");
+        }
+    }
+
     public Map<String, Object> register(RegisterRequest req) {
         String email = req.getEmail().trim().toLowerCase();
         if (userRepository.findByEmail(email).isPresent()) {
@@ -93,6 +103,8 @@ public class AuthService {
         String email = req.getEmail().trim().toLowerCase();
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Email hoặc mật khẩu không đúng"));
+
+        assertAccountCanAuthenticate(user);
 
         if (user.getPassword() == null || !passwordEncoder.matches(req.getPassword(), user.getPassword())) {
             throw new IllegalArgumentException("Email hoặc mật khẩu không đúng");
@@ -161,6 +173,7 @@ public class AuthService {
             user.setRole(getAdminEmails().contains(email) ? "admin" : "user");
             user.setPartnerCode(generatePartnerCode());
         } else {
+            assertAccountCanAuthenticate(user);
             if (user.getGoogleId() == null)
                 user.setGoogleId(googleId);
             if (picture != null && !picture.isBlank() && (user.getAvatar() == null || user.getAvatar().isBlank())) {
@@ -175,7 +188,7 @@ public class AuthService {
 
     public Map<String, Object> facebookAuth(GoogleAuthRequest req) {
         if (req.getAccessToken() == null || req.getAccessToken().isBlank()) {
-            throw new IllegalArgumentException("Thiáº¿u Facebook access token");
+            throw new IllegalArgumentException("Thiếu Facebook access token");
         }
 
         String url = "https://graph.facebook.com/me?fields=id,name,email,picture.type(large)&access_token="
@@ -186,23 +199,23 @@ public class AuthService {
             Map<String, Object> response = restTemplate.getForObject(url, Map.class);
             userInfo = response;
         } catch (RestClientResponseException e) {
-            throw new IllegalArgumentException("Facebook token khÃ´ng há»£p lá»‡");
+            throw new IllegalArgumentException("Facebook token không hợp lệ");
         }
         if (userInfo == null) {
-            throw new IllegalArgumentException("Facebook token khÃ´ng há»£p lá»‡");
+            throw new IllegalArgumentException("Facebook token không hợp lệ");
         }
 
         String facebookId = (String) userInfo.get("id");
         if (facebookId == null || facebookId.isBlank()) {
-            throw new IllegalArgumentException("Facebook token khÃ´ng há»£p lá»‡");
+            throw new IllegalArgumentException("Facebook token không hợp lệ");
         }
         if (req.getUserID() != null && !req.getUserID().isBlank() && !facebookId.equals(req.getUserID())) {
-            throw new IllegalArgumentException("Facebook user khÃ´ng khá»›p vá»›i access token");
+            throw new IllegalArgumentException("Facebook user không khớp với access token");
         }
 
         String email = (String) userInfo.get("email");
         if (email == null || email.isBlank()) {
-            throw new IllegalArgumentException("TÃ i khoáº£n Facebook chÆ°a chia sáº» email há»£p lá»‡");
+            throw new IllegalArgumentException("Tài khoản Facebook chưa chia sẻ email hợp lệ");
         }
         email = email.trim().toLowerCase();
 
@@ -233,6 +246,7 @@ public class AuthService {
             user.setRole(getAdminEmails().contains(email) ? "admin" : "user");
             user.setPartnerCode(generatePartnerCode());
         } else {
+            assertAccountCanAuthenticate(user);
             if (user.getFacebookId() == null)
                 user.setFacebookId(facebookId);
             if (!picture.isBlank() && (user.getAvatar() == null || user.getAvatar().isBlank())) {
@@ -246,6 +260,7 @@ public class AuthService {
     }
 
     public Map<String, Object> buildAuthPayload(User user) {
+        assertAccountCanAuthenticate(user);
         Map<String, Object> payload = new HashMap<>();
         payload.put("token", jwtUtil.generateToken(user.getId()));
         payload.put("user", sanitizeUser(user));
@@ -265,6 +280,8 @@ public class AuthService {
         m.put("onboardingCompleted", user.getOnboardingCompleted() != null ? user.getOnboardingCompleted() : false);
         m.put("partnerCode", user.getPartnerCode() != null ? user.getPartnerCode() : "");
         m.put("partnerId", user.getPartnerId());
+        m.put("accountStatus", user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE");
+        m.put("accountStatusReason", user.getAccountStatusReason());
         return m;
     }
 

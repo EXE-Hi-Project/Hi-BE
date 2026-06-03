@@ -28,6 +28,7 @@ public class AdminService {
     private final ChatRepository chatRepository;
     private final TransactionRepository transactionRepository;
     private final MongoTemplate mongoTemplate;
+    private final NotificationService notificationService;
 
     @Value("${FINANCE_PAID_USER_RATE:0.15}")
     private double paidUserRate;
@@ -53,7 +54,8 @@ public class AdminService {
     public AdminService(UserRepository userRepository, CycleRecordRepository cycleRecordRepository,
                         DailyLogSymptomRepository dailyLogSymptomRepository, NotificationRepository notificationRepository,
                         ChatRepository chatRepository, AdminAuditLogRepository auditLogRepository,
-                        TransactionRepository transactionRepository, MongoTemplate mongoTemplate) {
+                        TransactionRepository transactionRepository, MongoTemplate mongoTemplate,
+                        NotificationService notificationService) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogSymptomRepository = dailyLogSymptomRepository;
@@ -62,6 +64,7 @@ public class AdminService {
         this.auditLogRepository = auditLogRepository;
         this.transactionRepository = transactionRepository;
         this.mongoTemplate = mongoTemplate;
+        this.notificationService = notificationService;
     }
 
     private record MonthInfo(int year, int month, String key, String label, Instant startDate) {}
@@ -380,6 +383,91 @@ public class AdminService {
         }
 
         return user;
+    }
+
+    public User updateUserAccountStatus(String actorUserId, String targetUserId, String status, String reason, String ipAddress) {
+        if (actorUserId.equals(targetUserId)) {
+            throw new IllegalArgumentException("Thao tác nguy hiểm: Bạn không thể tự khóa tài khoản của chính mình.");
+        }
+
+        String safeStatus = status == null ? "" : status.toUpperCase().trim();
+        if (!List.of("ACTIVE", "LOCKED").contains(safeStatus)) {
+            throw new IllegalArgumentException("Trạng thái tài khoản không hợp lệ. Chỉ chấp nhận ACTIVE hoặc LOCKED.");
+        }
+
+        User user = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+
+        if ("DELETED".equalsIgnoreCase(user.getAccountStatus())) {
+            throw new IllegalArgumentException("Tài khoản đã bị xóa mềm, không thể đổi trạng thái.");
+        }
+
+        String oldStatus = user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE";
+        user.setAccountStatus(safeStatus);
+        user.setAccountStatusReason(reason != null ? reason.trim() : null);
+        user.setAccountStatusUpdatedAt(Instant.now());
+        user.setAccountStatusUpdatedBy(actorUserId);
+        userRepository.save(user);
+
+        AdminAuditLog log = new AdminAuditLog();
+        log.setActorUserId(actorUserId);
+        log.setTargetUserId(targetUserId);
+        log.setAction("UPDATE_USER_ACCOUNT_STATUS");
+        log.setEntityType("USER");
+        log.setEntityId(targetUserId);
+        log.setBeforeData(oldStatus);
+        log.setAfterData(safeStatus);
+        log.setIpAddress(ipAddress);
+        auditLogRepository.save(log);
+
+        return user;
+    }
+
+    public User softDeleteUser(String actorUserId, String targetUserId, String ipAddress) {
+        if (actorUserId.equals(targetUserId)) {
+            throw new IllegalArgumentException("Thao tác nguy hiểm: Bạn không thể tự xóa tài khoản của chính mình.");
+        }
+
+        User user = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+
+        String oldStatus = user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE";
+        user.setAccountStatus("DELETED");
+        user.setAccountStatusReason("Soft-deleted by admin");
+        user.setAccountStatusUpdatedAt(Instant.now());
+        user.setAccountStatusUpdatedBy(actorUserId);
+        userRepository.save(user);
+
+        AdminAuditLog log = new AdminAuditLog();
+        log.setActorUserId(actorUserId);
+        log.setTargetUserId(targetUserId);
+        log.setAction("SOFT_DELETE_USER");
+        log.setEntityType("USER");
+        log.setEntityId(targetUserId);
+        log.setBeforeData(oldStatus);
+        log.setAfterData("DELETED");
+        log.setIpAddress(ipAddress);
+        auditLogRepository.save(log);
+
+        return user;
+    }
+
+    public void sendUserNotification(String actorUserId, String targetUserId, String title, String message, String type, String ipAddress) {
+        User user = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+
+        String safeType = type == null || type.isBlank() ? "ADMIN_MESSAGE" : type.trim();
+        notificationService.createNotification(user.getId(), safeType, title.trim(), message.trim());
+
+        AdminAuditLog log = new AdminAuditLog();
+        log.setActorUserId(actorUserId);
+        log.setTargetUserId(targetUserId);
+        log.setAction("SEND_USER_NOTIFICATION");
+        log.setEntityType("NOTIFICATION");
+        log.setEntityId(targetUserId);
+        log.setAfterData(title.trim());
+        log.setIpAddress(ipAddress);
+        auditLogRepository.save(log);
     }
 
     public byte[] exportUsersCsv() {
