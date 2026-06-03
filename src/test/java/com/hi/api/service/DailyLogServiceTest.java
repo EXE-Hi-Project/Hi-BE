@@ -6,6 +6,7 @@ import com.hi.api.model.FlowIntensity;
 import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
+import com.hi.api.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -33,12 +34,16 @@ class DailyLogServiceTest {
         SymptomDictionaryRepository symptomDictionaryRepository = mock(SymptomDictionaryRepository.class);
         SequenceService sequenceService = mock(SequenceService.class);
         cycleRecordService = mock(CycleRecordService.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        NotificationService notificationService = mock(NotificationService.class);
         service = new DailyLogService(
                 dailyLogRepository,
                 dailyLogSymptomRepository,
                 symptomDictionaryRepository,
                 sequenceService,
-                cycleRecordService
+                cycleRecordService,
+                userRepository,
+                notificationService
         );
     }
 

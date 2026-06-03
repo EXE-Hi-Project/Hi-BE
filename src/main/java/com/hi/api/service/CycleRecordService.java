@@ -17,6 +17,8 @@ import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
 import com.hi.api.repository.UserRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
@@ -81,7 +83,12 @@ public class CycleRecordService {
         record.setId(sequenceService.next("cycle_records"));
         record.setUserId(userId);
         apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(), req.getIsIgnored());
+        ensureNoOverlap(userId, record, null);
         return cycleRecordRepository.save(record);
+    }
+
+    public Page<CycleRecord> getCycleRecordHistory(String userId, int page, int limit) {
+        return cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId, PageRequest.of(page, limit));
     }
 
     public CycleRecord updateCycleRecord(String userId, Long id, UpdateCycleRecordRequest req) {
@@ -90,6 +97,7 @@ public class CycleRecordService {
         LocalDate effectiveStartDate = req.getStartDate() != null ? req.getStartDate() : record.getStartDate();
         ensureUniqueStartDate(userId, effectiveStartDate, id);
         apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(), req.getIsIgnored());
+        ensureNoOverlap(userId, record, id);
         return cycleRecordRepository.save(record);
     }
 
@@ -109,6 +117,7 @@ public class CycleRecordService {
                         record.setId(sequenceService.next("cycle_records"));
                         record.setUserId(user.getId());
                         apply(record, startDate, endDate, user.getDefaultCycleLength(), user.getDefaultPeriodLength(), false);
+                        ensureNoOverlap(user.getId(), record, null);
                         return cycleRecordRepository.save(record);
                     });
         } catch (DateTimeParseException ex) {
@@ -129,6 +138,7 @@ public class CycleRecordService {
                     record.setId(sequenceService.next("cycle_records"));
                     record.setUserId(userId);
                     apply(record, startDate, null, user.getDefaultCycleLength(), user.getDefaultPeriodLength(), false);
+                    ensureNoOverlap(userId, record, null);
                     return cycleRecordRepository.save(record);
                 });
     }
@@ -211,11 +221,6 @@ public class CycleRecordService {
             estimatedCurrentStartDate = lastStartDate;
             estimatedCycleDay = recordedCycleDay;
             estimatedPhase = resolvePhase(recordedCycleDay, estimatedPeriodLength, estimatedCycleLength);
-        } else if (!today.isAfter(estimatedPeriodEndDate)) {
-            periodStatus = "PREDICTED";
-            estimatedCurrentStartDate = estimatedPeriodStartDate;
-            estimatedCycleDay = (int) ChronoUnit.DAYS.between(estimatedPeriodStartDate, today) + 1;
-            estimatedPhase = "Kinh nguyệt";
         } else {
             periodStatus = "DELAYED";
             estimatedCurrentStartDate = estimatedPeriodStartDate;
@@ -231,6 +236,9 @@ public class CycleRecordService {
         Integer estimatedPeriodDay = "PREDICTED".equals(periodStatus)
                 ? (int) ChronoUnit.DAYS.between(estimatedPeriodStartDate, today) + 1
                 : null;
+        String fertilityStatus = !today.isBefore(fertileWindowStartDate) && !today.isAfter(fertileWindowEndDate)
+                ? "HIGH"
+                : "LOW";
 
         boolean hasOutliers = intervals.stream().anyMatch(value -> !isTypicalCycleLength(value))
                 || recordedCycleLengths.stream().anyMatch(value -> !isTypicalCycleLength(value))
@@ -263,6 +271,7 @@ public class CycleRecordService {
                 .periodDelayDays(periodDelayDays)
                 .daysUntilEstimatedPeriod(daysUntilEstimatedPeriod)
                 .estimatedPeriodDay(estimatedPeriodDay)
+                .fertilityStatus(fertilityStatus)
                 .predictionConfidence(predictionConfidence)
                 .hasOutliers(hasOutliers)
                 .warnings(warnings)
@@ -275,6 +284,7 @@ public class CycleRecordService {
     private CycleRecordInsightResponse emptyInsights() {
         return CycleRecordInsightResponse.builder()
                 .cycleCount(0)
+                .fertilityStatus("UNKNOWN")
                 .predictionConfidence("LOW")
                 .hasOutliers(false)
                 .warnings(List.of("Chưa đủ dữ liệu để ước tính chu kỳ."))
@@ -435,6 +445,27 @@ public class CycleRecordService {
                 .ifPresent(existing -> {
                     throw new ConflictException("Đã có chu kỳ bắt đầu vào ngày này");
                 });
+    }
+
+    private void ensureNoOverlap(String userId, CycleRecord candidate, Long currentId) {
+        LocalDate candidateEnd = effectiveEndDate(candidate);
+        cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId).stream()
+                .filter(existing -> currentId == null || !existing.getId().equals(currentId))
+                .filter(existing -> existing.getStartDate() != null)
+                .filter(existing -> !candidate.getStartDate().isAfter(effectiveEndDate(existing))
+                        && !existing.getStartDate().isAfter(candidateEnd))
+                .findFirst()
+                .ifPresent(existing -> {
+                    throw new ConflictException("Khoảng ngày này đang trùng với một kỳ đã ghi nhận");
+                });
+    }
+
+    private LocalDate effectiveEndDate(CycleRecord record) {
+        if (record.getEndDate() != null) {
+            return record.getEndDate();
+        }
+        int periodLength = record.getPeriodLength() != null ? record.getPeriodLength() : DEFAULT_PERIOD_LENGTH;
+        return record.getStartDate().plusDays(periodLength - 1L);
     }
 
     private void apply(CycleRecord record, LocalDate startDate, LocalDate endDate, Integer cycleLength,

@@ -3,9 +3,12 @@ package com.hi.api.service;
 import com.hi.api.dto.request.ConnectPartnerRequest;
 import com.hi.api.dto.request.UpdateProfileRequest;
 import com.hi.api.model.CycleRecord;
+import com.hi.api.model.DailyLog;
 import com.hi.api.model.User;
 import com.hi.api.repository.CycleRecordRepository;
+import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.UserRepository;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,15 +23,18 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final CycleRecordRepository cycleRecordRepository;
+    private final DailyLogRepository dailyLogRepository;
     private final CycleRecordService cycleRecordService;
     private final NotificationService notificationService;
 
     public UserService(UserRepository userRepository,
                        CycleRecordRepository cycleRecordRepository,
+                       DailyLogRepository dailyLogRepository,
                        CycleRecordService cycleRecordService,
                        NotificationService notificationService) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
+        this.dailyLogRepository = dailyLogRepository;
         this.cycleRecordService = cycleRecordService;
         this.notificationService = notificationService;
     }
@@ -191,7 +197,7 @@ public class UserService {
         );
     }
 
-    public Map<String, Object> getPartnerData(String userId) {
+    public Map<String, Object> getPartnerData(String userId, int historyLimit) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
 
@@ -199,7 +205,10 @@ public class UserService {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("partner", null);
             response.put("cycles", List.of());
+            response.put("history", List.of());
             response.put("insights", null);
+            response.put("latestMood", null);
+            response.put("latestDailyLogDate", null);
             return response;
         }
 
@@ -207,6 +216,10 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy dữ liệu đối tác"));
 
         List<CycleRecord> cycles = cycleRecordRepository.findByUserIdOrderByStartDateDesc(partner.getId());
+        List<CycleRecord> history = cycleRecordRepository
+                .findByUserIdOrderByStartDateDesc(partner.getId(), PageRequest.of(0, Math.max(1, Math.min(historyLimit, 100))))
+                .getContent();
+        DailyLog latestMoodLog = dailyLogRepository.findFirstByUserIdAndMoodScoreIsNotNullOrderByLogDateDesc(partner.getId()).orElse(null);
         Map<String, Object> partnerProfile = new LinkedHashMap<>();
         partnerProfile.put("id", partner.getId());
         partnerProfile.put("name", partner.getName() != null ? partner.getName() : "");
@@ -215,7 +228,10 @@ public class UserService {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("partner", partnerProfile);
         response.put("cycles", cycles);
+        response.put("history", history);
         response.put("insights", cycleRecordService.getInsights(partner.getId()));
+        response.put("latestMood", latestMoodLog != null ? latestMoodLog.getMoodScore() : null);
+        response.put("latestDailyLogDate", latestMoodLog != null ? latestMoodLog.getLogDate() : null);
         return response;
     }
 }

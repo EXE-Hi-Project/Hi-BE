@@ -58,12 +58,18 @@ public class UserController {
     }
 
     @GetMapping("/partner-cycles")
-    public ResponseEntity<Map<String, Object>> getPartnerCycles(@AuthenticationPrincipal User user) {
-        Map<String, Object> partnerData = userService.getPartnerData(user.getId());
+    public ResponseEntity<Map<String, Object>> getPartnerCycles(
+            @AuthenticationPrincipal User user,
+            @RequestParam(defaultValue = "20") int historyLimit) {
+        Map<String, Object> partnerData = userService.getPartnerData(user.getId(), historyLimit);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
         response.put("partner", partnerData.get("partner"));
         response.put("cycles", partnerData.get("cycles"));
+        response.put("history", partnerData.get("history"));
+        response.put("insights", partnerData.get("insights"));
+        response.put("latestMood", partnerData.get("latestMood"));
+        response.put("latestDailyLogDate", partnerData.get("latestDailyLogDate"));
         return ResponseEntity.ok(response);
     }
 }

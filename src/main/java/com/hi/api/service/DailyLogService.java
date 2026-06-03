@@ -1,6 +1,7 @@
 package com.hi.api.service;
 
 import com.hi.api.dto.request.DailyLogSymptomRequest;
+import com.hi.api.dto.request.UpdateDailyLogMoodRequest;
 import com.hi.api.dto.request.UpsertDailyLogRequest;
 import com.hi.api.dto.request.UpsertDailyLogSymptomRequest;
 import com.hi.api.model.DailyLog;
@@ -11,6 +12,7 @@ import com.hi.api.model.SymptomSeverity;
 import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
+import com.hi.api.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -29,17 +31,23 @@ public class DailyLogService {
     private final SymptomDictionaryRepository symptomDictionaryRepository;
     private final SequenceService sequenceService;
     private final CycleRecordService cycleRecordService;
+    private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     public DailyLogService(DailyLogRepository dailyLogRepository,
                            DailyLogSymptomRepository dailyLogSymptomRepository,
                            SymptomDictionaryRepository symptomDictionaryRepository,
                            SequenceService sequenceService,
-                           CycleRecordService cycleRecordService) {
+                           CycleRecordService cycleRecordService,
+                           UserRepository userRepository,
+                           NotificationService notificationService) {
         this.dailyLogRepository = dailyLogRepository;
         this.dailyLogSymptomRepository = dailyLogSymptomRepository;
         this.symptomDictionaryRepository = symptomDictionaryRepository;
         this.sequenceService = sequenceService;
         this.cycleRecordService = cycleRecordService;
+        this.userRepository = userRepository;
+        this.notificationService = notificationService;
     }
 
     public List<DailyLog> getLogs(String userId, LocalDate from, LocalDate to) {
@@ -95,6 +103,63 @@ public class DailyLogService {
         }
         attachSymptoms(List.of(saved));
         return saved;
+    }
+
+    public Map<String, Object> updateMood(String userId, LocalDate logDate, UpdateDailyLogMoodRequest req) {
+        validateLogDate(logDate);
+        DailyLog log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate)
+                .orElseGet(() -> {
+                    DailyLog newLog = new DailyLog();
+                    newLog.setId(sequenceService.next("daily_logs"));
+                    newLog.setUserId(userId);
+                    newLog.setLogDate(logDate);
+                    return newLog;
+                });
+        log.setUserId(userId);
+        log.setLogDate(logDate);
+        log.setMoodScore(req.getMoodScore());
+        if (req.getNotes() != null) {
+            log.setNotes(req.getNotes());
+        }
+        DailyLog saved = dailyLogRepository.save(log);
+        attachSymptoms(List.of(saved));
+        boolean partnerNotificationSent = notifyPartnerMood(userId, req.getMoodScore());
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("dailyLog", saved);
+        response.put("partnerNotificationSent", partnerNotificationSent);
+        return response;
+    }
+
+    private boolean notifyPartnerMood(String userId, Integer moodScore) {
+        if (moodScore == null) {
+            return false;
+        }
+        return userRepository.findById(userId)
+                .filter(user -> user.getPartnerId() != null && !user.getPartnerId().isBlank())
+                .map(user -> {
+                    String senderName = user.getName() != null && !user.getName().isBlank() ? user.getName() : "Người ấy";
+                    notificationService.createNotification(
+                            user.getPartnerId(),
+                            "PARTNER_MOOD_UPDATE",
+                            "Cảm xúc mới từ " + senderName,
+                            senderName + " vừa ghi cảm xúc: " + moodLabel(moodScore)
+                    );
+                    return true;
+                })
+                .orElse(false);
+    }
+
+    private String moodLabel(Integer moodScore) {
+        if (moodScore == null) {
+            return "Chưa rõ";
+        }
+        return switch (Math.max(1, Math.min(5, moodScore))) {
+            case 1 -> "Bực bội";
+            case 2 -> "Lo lắng hoặc mệt mỏi";
+            case 4 -> "Bình tĩnh";
+            case 5 -> "Vui vẻ";
+            default -> "Bình thường";
+        };
     }
 
     public void deleteLog(String userId, LocalDate logDate) {

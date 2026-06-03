@@ -56,6 +56,7 @@ public class CycleRecordInsightResponse {
     Integer periodDelayDays;
     Integer daysUntilEstimatedPeriod;
     Integer estimatedPeriodDay;
+    String fertilityStatus;
     String predictionConfidence;
     boolean hasOutliers;
     List<String> warnings;

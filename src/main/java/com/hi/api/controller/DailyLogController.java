@@ -2,6 +2,7 @@ package com.hi.api.controller;
 
 import com.hi.api.dto.request.UpsertDailyLogRequest;
 import com.hi.api.dto.request.UpsertDailyLogSymptomRequest;
+import com.hi.api.dto.request.UpdateDailyLogMoodRequest;
 import com.hi.api.model.DailyLog;
 import com.hi.api.model.DailyLogSymptom;
 import com.hi.api.model.User;
@@ -51,6 +52,19 @@ public class DailyLogController {
             @Valid @RequestBody UpsertDailyLogRequest req) {
         DailyLog log = dailyLogService.upsertLog(user.getId(), logDate, req);
         return ResponseEntity.status(HttpStatus.OK).body(Map.of("success", true, "dailyLog", log));
+    }
+
+    @PatchMapping("/{logDate}/mood")
+    public ResponseEntity<Map<String, Object>> updateMood(
+            @AuthenticationPrincipal User user,
+            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate logDate,
+            @Valid @RequestBody UpdateDailyLogMoodRequest req) {
+        Map<String, Object> result = dailyLogService.updateMood(user.getId(), logDate, req);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "dailyLog", result.get("dailyLog"),
+                "partnerNotificationSent", result.get("partnerNotificationSent")
+        ));
     }
 
     @DeleteMapping("/{logDate}")
