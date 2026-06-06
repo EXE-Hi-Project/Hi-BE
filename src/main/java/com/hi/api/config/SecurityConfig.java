@@ -27,14 +27,12 @@ import java.util.List;
 @EnableMethodSecurity
 public class SecurityConfig {
 
-    @Value("${app.cors.allowed-origins:http://localhost:5173}")
-    private String allowedOriginsStr;
-
-    @Value("${app.cors.allow-vercel-preview:false}")
-    private boolean allowVercelPreview;
-
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
+    @Value("${app.cors.allowed-origins:http://localhost:5173}")
+    private String allowedOriginsStr;
+    @Value("${app.cors.allow-vercel-preview:false}")
+    private boolean allowVercelPreview;
 
     public SecurityConfig(JwtUtil jwtUtil, UserRepository userRepository) {
         this.jwtUtil = jwtUtil;
@@ -53,23 +51,13 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        http
-            .csrf(csrf -> csrf.disable())
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-            .authorizeHttpRequests(auth -> auth
+        http.csrf(csrf -> csrf.disable()).cors(cors -> cors.configurationSource(corsConfigurationSource())).sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)).authorizeHttpRequests(auth -> auth
                 // Allow health and auth endpoints
-                .requestMatchers("/health").permitAll()
-                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/health").permitAll().requestMatchers("/api/auth/**").permitAll()
                 // Allow Swagger/OpenAPI (springdoc) endpoints so UI and docs are accessible
                 .requestMatchers("/v3/api-docs/**", "/v3/api-docs", "/swagger-ui/**", "/swagger-ui.html", "/swagger-ui").permitAll()
                 // Allow preflight
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                    .requestMatchers("/chat/**").permitAll()
-                .anyRequest().authenticated()
-            )
-            .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class);
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll().requestMatchers("/api/admin/**").hasRole("ADMIN").requestMatchers("/chat/**").permitAll().requestMatchers("/api/chatbox/**").permitAll().anyRequest().authenticated()).addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
@@ -78,10 +66,7 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        List<String> origins = Arrays.stream(allowedOriginsStr.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .toList();
+        List<String> origins = Arrays.stream(allowedOriginsStr.split(",")).map(String::trim).filter(s -> !s.isEmpty()).toList();
 
         // Static allowed origins
         config.setAllowedOrigins(origins);

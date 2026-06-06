@@ -1,0 +1,19 @@
+
+The following files have been resolved:
+   org.springframework.boot:spring-boot-starter-web:jar:3.2.5:compile[36m -- module spring.boot.starter.web[0;1m [auto][m
+   org.springframework.boot:spring-boot-starter-security:jar:3.2.5:compile[36m -- module spring.boot.starter.security[0;1m [auto][m
+   org.springframework.boot:spring-boot-starter-validation:jar:3.2.5:compile[36m -- module spring.boot.starter.validation[0;1m [auto][m
+   org.springframework.boot:spring-boot-starter-data-mongodb:jar:3.2.5:compile[36m -- module spring.boot.starter.data.mongodb[0;1m [auto][m
+   com.mysql:mysql-connector-j:jar:8.3.0:runtime[36m -- module mysql.connector.j[0;1;33m (auto)[m
+   io.jsonwebtoken:jjwt-api:jar:0.11.5:compile[36m -- module jjwt.api[0;1;33m (auto)[m
+   io.jsonwebtoken:jjwt-impl:jar:0.11.5:runtime[36m -- module jjwt.impl[0;1;33m (auto)[m
+   io.jsonwebtoken:jjwt-jackson:jar:0.11.5:runtime[36m -- module jjwt.jackson[0;1;33m (auto)[m
+   org.springframework.ai:spring-ai-starter-model-openai:jar:1.0.3:compile[36m -- module spring.ai.starter.model.openai[0;1;33m (auto)[m
+   software.amazon.awssdk:bedrockruntime:jar:2.25.60:compile[36m -- module software.amazon.awssdk.services.bedrockruntime[0;1m [auto][m
+   com.google.api-client:google-api-client:jar:2.4.0:compile[36m -- module google.api.client[0;1m [auto][m
+   org.springdoc:springdoc-openapi-starter-webmvc-ui:jar:2.5.0:compile[36m -- module org.springdoc.openapi.ui[0;1m [auto][m
+   org.projectlombok:lombok:jar:1.18.38:compile (optional)[36m -- module lombok[m
+   org.springframework.boot:spring-boot-starter-test:jar:3.2.5:test[36m -- module spring.boot.starter.test[0;1m [auto][m
+   io.projectreactor:reactor-core:jar:3.6.5:compile[36m -- module reactor.core[0;1m [auto][m
+   org.springframework.security:spring-security-test:jar:6.2.4:test[36m -- module spring.security.test[0;1m [auto][m
+
