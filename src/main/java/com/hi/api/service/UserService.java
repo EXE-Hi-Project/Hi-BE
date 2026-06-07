@@ -1,6 +1,7 @@
 package com.hi.api.service;
 
 import com.hi.api.dto.request.ConnectPartnerRequest;
+import com.hi.api.dto.request.NotificationSettingsRequest;
 import com.hi.api.dto.request.UpdateProfileRequest;
 import com.hi.api.model.CycleRecord;
 import com.hi.api.model.DailyLog;
@@ -8,11 +9,13 @@ import com.hi.api.model.User;
 import com.hi.api.repository.CycleRecordRepository;
 import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.UserRepository;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -63,6 +66,7 @@ public class UserService {
         if (req.getPeriodReminder() != null) user.setPeriodReminder(req.getPeriodReminder());
         if (req.getReminderDaysBefore() != null) user.setReminderDaysBefore(req.getReminderDaysBefore());
         if (req.getPartnerNotifications() != null) user.setPartnerNotifications(req.getPartnerNotifications());
+        syncLegacyNotificationFields(user);
         if (req.getOnboardingCompleted() != null) user.setOnboardingCompleted(req.getOnboardingCompleted());
 
         User saved = userRepository.save(user);
@@ -70,6 +74,86 @@ public class UserService {
             cycleRecordService.upsertInitialFromProfile(saved);
         }
         return saved;
+    }
+
+    public User.NotificationPreferences getNotificationSettings(String userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        return ensureNotificationPreferences(user);
+    }
+
+    public User.NotificationPreferences updateNotificationSettings(String userId, NotificationSettingsRequest req) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        User.NotificationPreferences prefs = ensureNotificationPreferences(user);
+
+        if (req.getPeriodUpcomingEnabled() != null) prefs.setPeriodUpcomingEnabled(req.getPeriodUpcomingEnabled());
+        if (req.getFertilityWindowEnabled() != null) prefs.setFertilityWindowEnabled(req.getFertilityWindowEnabled());
+        if (req.getDailyHealthTipsEnabled() != null) prefs.setDailyHealthTipsEnabled(req.getDailyHealthTipsEnabled());
+        if (req.getPartnerPeriodAlertEnabled() != null) prefs.setPartnerPeriodAlertEnabled(req.getPartnerPeriodAlertEnabled());
+        if (req.getPartnerMoodUpdatesEnabled() != null) prefs.setPartnerMoodUpdatesEnabled(req.getPartnerMoodUpdatesEnabled());
+        if (req.getPartnerCareTipsEnabled() != null) prefs.setPartnerCareTipsEnabled(req.getPartnerCareTipsEnabled());
+        if (req.getPushEnabled() != null) prefs.setPushEnabled(req.getPushEnabled());
+        if (req.getEmailEnabled() != null) prefs.setEmailEnabled(req.getEmailEnabled());
+        // SMS is intentionally disabled for the MVP until a provider is configured.
+        prefs.setSmsEnabled(false);
+        if (req.getReminderDaysBefore() != null) prefs.setReminderDaysBefore(req.getReminderDaysBefore());
+        if (req.getSymptomDailyReminderEnabled() != null) prefs.setSymptomDailyReminderEnabled(req.getSymptomDailyReminderEnabled());
+        if (req.getSymptomReminderTime() != null) prefs.setSymptomReminderTime(validTime(req.getSymptomReminderTime(), "20:00"));
+        if (req.getPartnerEndOfDayNudgeEnabled() != null) prefs.setPartnerEndOfDayNudgeEnabled(req.getPartnerEndOfDayNudgeEnabled());
+        if (req.getPartnerNudgeTime() != null) prefs.setPartnerNudgeTime(validTime(req.getPartnerNudgeTime(), "21:00"));
+        if (req.getAiResponseStyle() != null && !req.getAiResponseStyle().isBlank()) {
+            String style = req.getAiResponseStyle().trim().toUpperCase();
+            prefs.setAiResponseStyle(style);
+            user.setAiTone(style);
+        }
+
+        user.setNotificationPreferences(prefs);
+        user.setPeriodReminder(Boolean.TRUE.equals(prefs.getPeriodUpcomingEnabled()));
+        user.setPartnerNotifications(Boolean.TRUE.equals(prefs.getPartnerPeriodAlertEnabled()));
+        user.setReminderDaysBefore(prefs.getReminderDaysBefore());
+        userRepository.save(user);
+        return prefs;
+    }
+
+    private User.NotificationPreferences ensureNotificationPreferences(User user) {
+        User.NotificationPreferences prefs = user.getNotificationPreferences();
+        if (prefs == null) {
+            prefs = new User.NotificationPreferences();
+        }
+        if (user.getPeriodReminder() != null) prefs.setPeriodUpcomingEnabled(user.getPeriodReminder());
+        if (user.getPartnerNotifications() != null) prefs.setPartnerPeriodAlertEnabled(user.getPartnerNotifications());
+        if (user.getReminderDaysBefore() != null) prefs.setReminderDaysBefore(user.getReminderDaysBefore());
+        prefs.setSmsEnabled(false);
+        if (prefs.getSymptomDailyReminderEnabled() == null) prefs.setSymptomDailyReminderEnabled(true);
+        prefs.setSymptomReminderTime(validTime(prefs.getSymptomReminderTime(), "20:00"));
+        if (prefs.getPartnerEndOfDayNudgeEnabled() == null) prefs.setPartnerEndOfDayNudgeEnabled(true);
+        prefs.setPartnerNudgeTime(validTime(prefs.getPartnerNudgeTime(), "21:00"));
+        if (prefs.getAiResponseStyle() == null || prefs.getAiResponseStyle().isBlank()) {
+            prefs.setAiResponseStyle(user.getAiTone() != null && !user.getAiTone().isBlank()
+                    ? user.getAiTone().toUpperCase()
+                    : "FRIENDLY");
+        }
+        user.setNotificationPreferences(prefs);
+        return prefs;
+    }
+
+    private String validTime(String value, String fallback) {
+        if (value == null || value.isBlank()) return fallback;
+        try {
+            return LocalTime.parse(value.trim()).toString();
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private void syncLegacyNotificationFields(User user) {
+        User.NotificationPreferences prefs = ensureNotificationPreferences(user);
+        if (user.getPeriodReminder() != null) prefs.setPeriodUpcomingEnabled(user.getPeriodReminder());
+        if (user.getPartnerNotifications() != null) prefs.setPartnerPeriodAlertEnabled(user.getPartnerNotifications());
+        if (user.getReminderDaysBefore() != null) prefs.setReminderDaysBefore(user.getReminderDaysBefore());
+        prefs.setSmsEnabled(false);
+        user.setNotificationPreferences(prefs);
     }
 
     private void validateOnboardingPayload(UpdateProfileRequest req, String effectiveGender) {
@@ -136,76 +220,91 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
 
         if (user.getPartnerId() != null) {
-            throw new IllegalArgumentException("Bạn đã kết nối với một đối tác khác. Vui lòng hủy kết nối trước.");
+            throw new IllegalArgumentException("Bạn đã kết nối với một người khác. Vui lòng hủy kết nối trước.");
         }
 
         User partner = userRepository.findByPartnerCode(req.getPartnerCode().toUpperCase())
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy đối tác với mã này"));
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy Người ấy với mã này"));
 
         if (partner.getId().equals(userId)) {
             throw new IllegalArgumentException("Không thể kết nối với chính mình");
         }
 
         if (partner.getPartnerId() != null) {
-            throw new IllegalArgumentException("Đối tác này đã kết nối với một người khác.");
+            throw new IllegalArgumentException("Người ấy đã kết nối với một tài khoản khác.");
         }
+
         user.setPartnerId(partner.getId());
         partner.setPartnerId(userId);
-        userRepository.save(user);
-        userRepository.save(partner);
+        User savedUser = userRepository.save(user);
+        User savedPartner = userRepository.save(partner);
 
         notificationService.createNotification(
-                user.getId(), "PARTNER_CONNECT", "Kết nối thành công",
-                "Bạn đã kết nối bạn đời với " + (partner.getName() != null ? partner.getName() : "đối tác")
+                savedUser.getId(), "PARTNER_CONNECT", "Kết nối thành công",
+                "Bạn đã kết nối với " + displayName(savedPartner, "Người ấy")
         );
-
         notificationService.createNotification(
-                partner.getId(), "PARTNER_CONNECT", "Kết nối thành công",
-                (user.getName() != null ? user.getName() : "Một người") + " đã kết nối bạn đời với bạn"
+                savedPartner.getId(), "PARTNER_CONNECT", "Kết nối thành công",
+                displayName(savedUser, "Một người") + " đã kết nối với bạn"
         );
 
         return Map.of(
-                "name", partner.getName() != null ? partner.getName() : "",
-                "email", partner.getEmail()
+                "id", savedPartner.getId(),
+                "name", savedPartner.getName() != null ? savedPartner.getName() : "",
+                "email", savedPartner.getEmail()
         );
     }
 
     @Transactional
-    public void disconnectPartner(String userId) {
+    public Map<String, Object> disconnectPartner(String userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
         String partnerId = user.getPartnerId();
+        Map<String, Object> previousPartner = new LinkedHashMap<>();
 
         if (partnerId != null) {
-            userRepository.findById(partnerId).ifPresent(p -> {
-                p.setPartnerId(null);
-                userRepository.save(p);
+            userRepository.findById(partnerId).ifPresent(partner -> {
+                previousPartner.put("id", partner.getId());
+                previousPartner.put("name", partner.getName() != null ? partner.getName() : "");
+                previousPartner.put("email", partner.getEmail());
 
-                // Gửi thông báo cho partner bị ngắt kết nối
+                partner.setPartnerId(null);
+                userRepository.save(partner);
                 notificationService.createNotification(
-                        p.getId(), "PARTNER_DISCONNECT", "Hủy kết nối",
-                        "Đối tác của bạn đã hủy kết nối bạn đời"
+                        partner.getId(), "PARTNER_DISCONNECT", "Hủy kết nối",
+                        displayName(user, "Người ấy") + " đã hủy kết nối với bạn"
                 );
             });
         }
 
         user.setPartnerId(null);
-        userRepository.save(user);
-        notificationService.createNotification(
-                userId, "PARTNER_DISCONNECT", "Hủy kết nối",
-                "Bạn đã hủy kết nối bạn đời thành công"
-        );
+        User saved = userRepository.save(user);
+        if (partnerId != null) {
+            notificationService.createNotification(
+                    userId, "PARTNER_DISCONNECT", "Hủy kết nối",
+                    "Bạn đã hủy kết nối thành công"
+            );
+        }
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("user", saved);
+        response.put("previousPartner", previousPartner.isEmpty() ? null : previousPartner);
+        response.put("partnerDisconnected", true);
+        return response;
     }
 
-    public Map<String, Object> getPartnerData(String userId, int historyLimit) {
+    public Map<String, Object> getPartnerData(String userId, int historyPage, int historyLimit) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+
+        int safePage = Math.max(0, historyPage);
+        int safeLimit = Math.max(1, Math.min(historyLimit, 100));
 
         if (user.getPartnerId() == null) {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("partner", null);
             response.put("cycles", List.of());
-            response.put("history", List.of());
+            response.put("history", historyResponse(List.of(), 0, safePage, safeLimit, false));
             response.put("insights", null);
             response.put("latestMood", null);
             response.put("latestDailyLogDate", null);
@@ -213,25 +312,72 @@ public class UserService {
         }
 
         User partner = userRepository.findById(user.getPartnerId())
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy dữ liệu đối tác"));
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy dữ liệu Người ấy"));
 
         List<CycleRecord> cycles = cycleRecordRepository.findByUserIdOrderByStartDateDesc(partner.getId());
-        List<CycleRecord> history = cycleRecordRepository
-                .findByUserIdOrderByStartDateDesc(partner.getId(), PageRequest.of(0, Math.max(1, Math.min(historyLimit, 100))))
-                .getContent();
-        DailyLog latestMoodLog = dailyLogRepository.findFirstByUserIdAndMoodScoreIsNotNullOrderByLogDateDesc(partner.getId()).orElse(null);
+        Page<CycleRecord> historyPageResult = cycleRecordRepository
+                .findByUserIdOrderByStartDateDesc(partner.getId(), PageRequest.of(safePage, safeLimit));
+        DailyLog latestMoodLog = dailyLogRepository
+                .findFirstByUserIdAndMoodScoreIsNotNullOrderByLogDateDesc(partner.getId())
+                .orElse(null);
+
         Map<String, Object> partnerProfile = new LinkedHashMap<>();
         partnerProfile.put("id", partner.getId());
         partnerProfile.put("name", partner.getName() != null ? partner.getName() : "");
         partnerProfile.put("avatar", partner.getAvatar() != null ? partner.getAvatar() : "");
         partnerProfile.put("gender", partner.getGender() != null ? partner.getGender() : "");
+
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("partner", partnerProfile);
         response.put("cycles", cycles);
-        response.put("history", history);
+        response.put("history", historyResponse(
+                historyPageResult.getContent(),
+                historyPageResult.getTotalElements(),
+                safePage,
+                safeLimit,
+                historyPageResult.hasNext()
+        ));
         response.put("insights", cycleRecordService.getInsights(partner.getId()));
-        response.put("latestMood", latestMoodLog != null ? latestMoodLog.getMoodScore() : null);
+        response.put("latestMood", moodResponse(latestMoodLog));
         response.put("latestDailyLogDate", latestMoodLog != null ? latestMoodLog.getLogDate() : null);
         return response;
+    }
+
+    private Map<String, Object> moodResponse(DailyLog log) {
+        if (log == null || log.getMoodScore() == null) {
+            return null;
+        }
+        Map<String, Object> mood = new LinkedHashMap<>();
+        mood.put("moodScore", log.getMoodScore());
+        mood.put("label", moodLabel(log.getMoodScore()));
+        mood.put("logDate", log.getLogDate());
+        return mood;
+    }
+
+    private String moodLabel(Integer moodScore) {
+        if (moodScore == null) {
+            return "Chưa rõ";
+        }
+        return switch (Math.max(1, Math.min(5, moodScore))) {
+            case 1 -> "Bực bội";
+            case 2 -> "Lo lắng hoặc mệt mỏi";
+            case 4 -> "Bình tĩnh";
+            case 5 -> "Vui vẻ";
+            default -> "Bình thường";
+        };
+    }
+
+    private Map<String, Object> historyResponse(List<CycleRecord> items, long total, int page, int limit, boolean hasMore) {
+        Map<String, Object> history = new LinkedHashMap<>();
+        history.put("items", items);
+        history.put("total", total);
+        history.put("page", page);
+        history.put("limit", limit);
+        history.put("hasMore", hasMore);
+        return history;
+    }
+
+    private String displayName(User user, String fallback) {
+        return user.getName() != null && !user.getName().isBlank() ? user.getName() : fallback;
     }
 }

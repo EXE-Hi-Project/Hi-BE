@@ -16,31 +16,31 @@ import java.util.List;
 import java.util.Map;
 
 @Service
-public class AffiliateTiktokClient {
+public class AffiliateShopeeClient {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${app.affiliate.tiktok.products-url:}")
+    @Value("${app.affiliate.shopee.products-url:}")
     private String productsUrl;
 
-    @Value("${app.affiliate.tiktok.access-token:}")
+    @Value("${app.affiliate.shopee.access-token:}")
     private String accessToken;
 
-    @Value("${app.affiliate.tiktok.auth-header-name:Authorization}")
+    @Value("${app.affiliate.shopee.auth-header-name:Authorization}")
     private String authHeaderName;
 
-    @Value("${app.affiliate.tiktok.auth-header-prefix:Bearer }")
+    @Value("${app.affiliate.shopee.auth-header-prefix:Bearer }")
     private String authHeaderPrefix;
 
-    public AffiliateTiktokClient(RestTemplate restTemplate, ObjectMapper objectMapper) {
+    public AffiliateShopeeClient(RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
     }
 
     public List<Map<String, Object>> fetchProducts() {
         if (productsUrl == null || productsUrl.isBlank()) {
-            throw new IllegalArgumentException("Chưa cấu hình TikTok products URL");
+            throw new IllegalArgumentException("Chưa cấu hình Shopee products URL");
         }
 
         HttpHeaders headers = new HttpHeaders();
@@ -66,36 +66,25 @@ public class AffiliateTiktokClient {
             List<Map<String, Object>> products = new ArrayList<>();
             if (listNode != null && listNode.isArray()) {
                 for (JsonNode node : listNode) {
-                    Map<String, Object> map = objectMapper.convertValue(node, Map.class);
-                    products.add(map);
+                    products.add(objectMapper.convertValue(node, Map.class));
                 }
             }
             return products;
         } catch (Exception ex) {
-            throw new IllegalArgumentException("Không thể đọc dữ liệu sản phẩm TikTok", ex);
+            throw new IllegalArgumentException("Không thể đọc dữ liệu sản phẩm Shopee", ex);
         }
     }
 
     private JsonNode extractListNode(JsonNode root) {
-        if (root == null) {
-            return null;
-        }
-        if (root.isArray()) {
-            return root;
-        }
+        if (root == null) return null;
+        if (root.isArray()) return root;
         for (String key : List.of("data", "items", "products", "list", "result")) {
             JsonNode node = root.get(key);
-            if (node == null) {
-                continue;
-            }
-            if (node.isArray()) {
-                return node;
-            }
+            if (node == null) continue;
+            if (node.isArray()) return node;
             for (String childKey : List.of("items", "products", "list", "data")) {
                 JsonNode child = node.get(childKey);
-                if (child != null && child.isArray()) {
-                    return child;
-                }
+                if (child != null && child.isArray()) return child;
             }
         }
         return null;

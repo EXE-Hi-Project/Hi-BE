@@ -5,6 +5,7 @@ import com.hi.api.dto.request.UpsertHealthVideoRequest;
 import com.hi.api.exception.ConflictException;
 import com.hi.api.model.HealthVideo;
 import com.hi.api.model.HealthVideoStatus;
+import com.hi.api.model.HealthVideoTargetAudience;
 import com.hi.api.model.User;
 import com.hi.api.repository.HealthVideoRepository;
 import org.springframework.data.domain.Sort;
@@ -17,9 +18,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Service
 public class HealthVideoService {
@@ -54,8 +55,12 @@ public class HealthVideoService {
         String phase = insights != null ? insights.getEstimatedPhase() : null;
         Set<String> interests = normalizedSet(user.getInterests());
         Set<String> goals = normalizedSet(user.getGoals());
+        HealthVideoTargetAudience audience = resolveAudience(user.getGender());
 
         return published.stream()
+                .filter(video -> video.getTargetAudience() == null
+                        || video.getTargetAudience() == HealthVideoTargetAudience.BOTH
+                        || video.getTargetAudience() == audience)
                 .sorted(Comparator
                         .comparingInt((HealthVideo video) -> recommendationScore(video, interests, goals, phase))
                         .reversed()
@@ -116,6 +121,9 @@ public class HealthVideoService {
         video.setLanguage(textOrDefault(request.getLanguage(), "vi"));
         video.setPriority(request.getPriority() != null ? request.getPriority() : 0);
         video.setStatus(request.getStatus() != null ? request.getStatus() : HealthVideoStatus.DRAFT);
+        video.setTargetAudience(request.getTargetAudience() != null
+                ? request.getTargetAudience()
+                : HealthVideoTargetAudience.BOTH);
         if (video.getStatus() == HealthVideoStatus.PUBLISHED) {
             video.setReviewedAt(Instant.now());
             video.setReviewedBy(adminId);
@@ -188,5 +196,12 @@ public class HealthVideoService {
 
     private long safeLimit(int limit) {
         return Math.min(Math.max(limit, 1), 20);
+    }
+
+    private HealthVideoTargetAudience resolveAudience(String gender) {
+        if ("male".equalsIgnoreCase(gender)) {
+            return HealthVideoTargetAudience.MALE;
+        }
+        return HealthVideoTargetAudience.FEMALE;
     }
 }

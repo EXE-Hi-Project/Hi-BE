@@ -9,6 +9,8 @@ import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class NotificationService {
@@ -38,13 +40,51 @@ public class NotificationService {
         });
     }
     public void createNotification(String userId, String type, String title, String message) {
+        createNotification(userId, type, title, message, null, null, null);
+    }
+
+    public Notification createNotification(
+            String userId,
+            String type,
+            String title,
+            String message,
+            String actionUrl,
+            String dedupeKey,
+            Map<String, Object> metadata
+    ) {
         Notification notification = new Notification();
         notification.setUserId(userId);
         notification.setType(type);
         notification.setTitle(title);
         notification.setMessage(message);
-        notificationRepository.save(notification);
+        notification.setActionUrl(actionUrl);
+        notification.setDedupeKey(dedupeKey);
+        notification.setMetadata(metadata);
+        return notificationRepository.save(notification);
     }
+
+    public Notification createIdempotentNotification(
+            String userId,
+            String type,
+            String title,
+            String message,
+            String actionUrl,
+            String dedupeKey,
+            Map<String, Object> metadata
+    ) {
+        if (dedupeKey != null && !dedupeKey.isBlank()) {
+            Optional<Notification> existing = notificationRepository.findByUserIdAndTypeAndDedupeKey(userId, type, dedupeKey);
+            if (existing.isPresent()) return existing.get();
+        }
+        return createNotification(userId, type, title, message, actionUrl, dedupeKey, metadata);
+    }
+
+    public boolean existsByDedupeKey(String userId, String type, String dedupeKey) {
+        return dedupeKey != null
+                && !dedupeKey.isBlank()
+                && notificationRepository.findByUserIdAndTypeAndDedupeKey(userId, type, dedupeKey).isPresent();
+    }
+
     public long getUnreadCount(String userId) {
         return notificationRepository.countByUserIdAndRead(userId, false);
     }

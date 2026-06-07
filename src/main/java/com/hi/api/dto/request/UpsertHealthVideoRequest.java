@@ -1,6 +1,7 @@
 package com.hi.api.dto.request;
 
 import com.hi.api.model.HealthVideoStatus;
+import com.hi.api.model.HealthVideoTargetAudience;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
@@ -27,4 +28,5 @@ public class UpsertHealthVideoRequest {
     private String language;
     private Integer priority;
     private HealthVideoStatus status;
+    private HealthVideoTargetAudience targetAudience;
 }

@@ -6,7 +6,12 @@ import com.hi.api.service.NotificationService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
@@ -34,7 +39,6 @@ public class NotificationController {
         return ResponseEntity.ok(Map.of("success", true, "message", "Đã đánh dấu tất cả là đã đọc"));
     }
 
-    // Also support PATCH /mark-all-read for new clients
     @PatchMapping("/mark-all-read")
     public ResponseEntity<Map<String, Object>> markAllReadPatch(@AuthenticationPrincipal User user) {
         notificationService.markAllRead(user.getId());

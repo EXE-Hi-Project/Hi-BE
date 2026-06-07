@@ -13,6 +13,8 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
@@ -41,12 +43,32 @@ public class AffiliateProduct {
 
     private Double commissionRate = 0.0;
 
+    private BigDecimal commissionAmount = BigDecimal.ZERO;
+
     private String affiliateUrl = "";
 
     private String imageUrl = "";
 
     @Indexed
     private String symptomCategory = "";
+
+    private String category = "";
+
+    private List<String> symptomTags = new ArrayList<>();
+
+    private List<String> phaseTags = new ArrayList<>();
+
+    private List<String> goalTags = new ArrayList<>();
+
+    private String audience = "BOTH";
+
+    private String status = "ACTIVE";
+
+    private Integer priority = 0;
+
+    private String sourceName = "";
+
+    private String currency = "VND";
 
     @Indexed
     private Boolean isActive = true;

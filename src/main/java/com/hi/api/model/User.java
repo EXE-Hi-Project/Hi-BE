@@ -69,6 +69,7 @@ public class User {
     private Boolean periodReminder = true;
     private Integer reminderDaysBefore = 3;
     private Boolean partnerNotifications = true;
+    private NotificationPreferences notificationPreferences = new NotificationPreferences();
 
     // Onboarding
     private Boolean onboardingCompleted = false;
@@ -85,6 +86,26 @@ public class User {
         private String plan = "free";
         private String status;
         private Instant currentPeriodEnd;
+    }
+
+    @Data
+    @NoArgsConstructor
+    public static class NotificationPreferences {
+        private Boolean periodUpcomingEnabled = true;
+        private Boolean fertilityWindowEnabled = false;
+        private Boolean dailyHealthTipsEnabled = true;
+        private Boolean partnerPeriodAlertEnabled = true;
+        private Boolean partnerMoodUpdatesEnabled = true;
+        private Boolean partnerCareTipsEnabled = false;
+        private Boolean pushEnabled = true;
+        private Boolean emailEnabled = true;
+        private Boolean smsEnabled = false;
+        private Integer reminderDaysBefore = 3;
+        private Boolean symptomDailyReminderEnabled = true;
+        private String symptomReminderTime = "20:00";
+        private Boolean partnerEndOfDayNudgeEnabled = true;
+        private String partnerNudgeTime = "21:00";
+        private String aiResponseStyle = "FRIENDLY";
     }
 
     @CreatedDate

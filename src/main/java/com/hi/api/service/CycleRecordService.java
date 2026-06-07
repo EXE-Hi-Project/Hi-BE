@@ -91,6 +91,11 @@ public class CycleRecordService {
         return cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId, PageRequest.of(page, limit));
     }
 
+    public CycleRecord getCycleRecord(String userId, Long id) {
+        return cycleRecordRepository.findByIdAndUserId(id, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
+    }
+
     public CycleRecord updateCycleRecord(String userId, Long id, UpdateCycleRecordRequest req) {
         CycleRecord record = cycleRecordRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
@@ -245,6 +250,8 @@ public class CycleRecordService {
                 || periodLengths.stream().anyMatch(value -> !isTypicalPeriodLength(value));
         List<String> warnings = buildWarnings(hasOutliers, intervals.size());
         String predictionConfidence = typicalIntervals.size() >= 3 ? "HIGH" : typicalIntervals.isEmpty() ? "LOW" : "MEDIUM";
+        RegularityAssessment regularity = assessRegularity(sorted, intervals, periodLengths, hasOutliers);
+        List<CycleRecordInsightResponse.CycleTrendPoint> trendPoints = buildTrendPoints(sorted, intervals);
 
         SymptomAnalytics analytics = analyzeSymptoms(userId, sorted, estimatedCycleLength, estimatedPeriodLength);
         return CycleRecordInsightResponse.builder()
@@ -273,6 +280,11 @@ public class CycleRecordService {
                 .estimatedPeriodDay(estimatedPeriodDay)
                 .fertilityStatus(fertilityStatus)
                 .predictionConfidence(predictionConfidence)
+                .regularityStatus(regularity.status)
+                .regularityScore(regularity.score)
+                .regularityLabel(regularity.label)
+                .regularityReasons(regularity.reasons)
+                .cycleTrendPoints(trendPoints)
                 .hasOutliers(hasOutliers)
                 .warnings(warnings)
                 .symptomImpactScore(analytics.overallImpactScore)
@@ -286,6 +298,11 @@ public class CycleRecordService {
                 .cycleCount(0)
                 .fertilityStatus("UNKNOWN")
                 .predictionConfidence("LOW")
+                .regularityStatus("UNKNOWN")
+                .regularityScore(0)
+                .regularityLabel("Chưa đủ dữ liệu")
+                .regularityReasons(List.of("Cần ít nhất 2 kỳ đã xác nhận để đánh giá xu hướng chu kỳ."))
+                .cycleTrendPoints(List.of())
                 .hasOutliers(false)
                 .warnings(List.of("Chưa đủ dữ liệu để ước tính chu kỳ."))
                 .symptomImpactScore(0.0)
@@ -303,6 +320,61 @@ public class CycleRecordService {
             }
         }
         return intervals;
+    }
+
+    private RegularityAssessment assessRegularity(List<CycleRecord> sorted,
+                                                  List<Integer> intervals,
+                                                  List<Integer> periodLengths,
+                                                  boolean hasOutliers) {
+        if (intervals.size() < 2) {
+            return new RegularityAssessment(
+                    "UNKNOWN",
+                    0,
+                    "Chưa đủ dữ liệu",
+                    List.of("Nên nhập ít nhất 3 kỳ gần nhất để Hi đánh giá xu hướng ổn hơn.")
+            );
+        }
+
+        int min = intervals.stream().min(Integer::compareTo).orElse(DEFAULT_CYCLE_LENGTH);
+        int max = intervals.stream().max(Integer::compareTo).orElse(DEFAULT_CYCLE_LENGTH);
+        double avg = intervals.stream().mapToInt(Integer::intValue).average().orElse(DEFAULT_CYCLE_LENGTH);
+        int variation = max - min;
+        boolean allTypicalCycles = intervals.stream().allMatch(this::isTypicalCycleLength);
+        boolean allTypicalPeriods = periodLengths.isEmpty() || periodLengths.stream().allMatch(this::isTypicalPeriodLength);
+        int score = Math.max(0, Math.min(100, (int) Math.round(100 - (variation / Math.max(avg, 1.0)) * 100)));
+
+        List<String> reasons = new ArrayList<>();
+        reasons.add("Độ dài chu kỳ dao động khoảng " + variation + " ngày.");
+        reasons.add("Chu kỳ trung bình khoảng " + Math.round(avg) + " ngày.");
+        if (!allTypicalCycles) reasons.add("Có chu kỳ ngoài khoảng tham chiếu 21-35 ngày.");
+        if (!allTypicalPeriods) reasons.add("Có kỳ kinh ngoài khoảng tham chiếu 2-7 ngày.");
+        if (hasOutliers) reasons.add("Hi vẫn lưu dữ liệu bất thường nhưng giảm ảnh hưởng của outlier khi tính trung bình.");
+
+        if (variation <= 7 && allTypicalCycles && allTypicalPeriods && !hasOutliers) {
+            return new RegularityAssessment("REGULAR", Math.max(score, 80), "Chu kỳ khá đều", reasons);
+        }
+        if (variation <= 12 && allTypicalPeriods) {
+            return new RegularityAssessment("NORMAL", Math.max(score, 55), "Chu kỳ trong mức bình thường", reasons);
+        }
+        return new RegularityAssessment("IRREGULAR", Math.min(score, 55), "Chu kỳ có dấu hiệu bất thường", reasons);
+    }
+
+    private List<CycleRecordInsightResponse.CycleTrendPoint> buildTrendPoints(List<CycleRecord> sorted, List<Integer> intervals) {
+        List<CycleRecordInsightResponse.CycleTrendPoint> points = new ArrayList<>();
+        for (int index = 0; index < sorted.size(); index++) {
+            CycleRecord record = sorted.get(index);
+            Integer cycleLength = index == 0
+                    ? record.getCycleLength()
+                    : intervals.size() >= index ? intervals.get(index - 1) : record.getCycleLength();
+            points.add(CycleRecordInsightResponse.CycleTrendPoint.builder()
+                    .cycleId(record.getId())
+                    .startDate(record.getStartDate())
+                    .cycleLength(cycleLength)
+                    .periodLength(record.getPeriodLength())
+                    .outlier(!isTypicalCycleLength(cycleLength) || !isTypicalPeriodLength(record.getPeriodLength()))
+                    .build());
+        }
+        return points;
     }
 
     private List<String> buildWarnings(boolean hasOutliers, int intervalCount) {
@@ -607,4 +679,6 @@ public class CycleRecordService {
             return new SymptomAnalytics(0.0, List.of(), List.of());
         }
     }
+
+    private record RegularityAssessment(String status, int score, String label, List<String> reasons) {}
 }

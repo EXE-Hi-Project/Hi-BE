@@ -9,6 +9,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
+import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -23,6 +24,9 @@ public class Notification {
     private String type;
     private String title;
     private String message;
+    private String actionUrl;
+    private String dedupeKey;
+    private Map<String, Object> metadata;
     private Boolean read = false;
 
     @CreatedDate

@@ -8,8 +8,14 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -24,24 +30,34 @@ public class ChatController {
         this.chatService = chatService;
     }
 
-    // GET /api/chat  (matches FE: api.get('/chat'))
     @GetMapping({"", "/"})
-    public ResponseEntity<Map<String, Object>> getHistory(@AuthenticationPrincipal User user) {
-        List<ChatMessage> messages = chatService.getHistory(user.getId());
+    public ResponseEntity<Map<String, Object>> getHistory(
+            @AuthenticationPrincipal User user,
+            @RequestParam(required = false) LocalDate sessionDate) {
+        List<ChatMessage> messages = chatService.getHistory(user.getId(), sessionDate);
         return ResponseEntity.ok(Map.of("success", true, "messages", messages));
     }
 
-    // POST /api/chat  (matches FE: api.post('/chat', { content }))
+    @GetMapping("/sessions")
+    public ResponseEntity<Map<String, Object>> getSessions(
+            @AuthenticationPrincipal User user,
+            @RequestParam(defaultValue = "30") int limit) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "sessions", chatService.getSessions(user.getId(), limit)
+        ));
+    }
+
     @PostMapping({"", "/"})
     public ResponseEntity<Map<String, Object>> sendMessage(
             @AuthenticationPrincipal User user,
             @Valid @RequestBody SendMessageRequest req) {
-        try {
-            ChatMessage message = chatService.sendMessage(user.getId(), req.getContent());
-            return ResponseEntity.ok(Map.of("success", true, "message", message));
-        } catch (Exception e) {
-            return ResponseEntity.internalServerError()
-                    .body(Map.of("success", false, "message", "Lỗi khi gửi tin nhắn: " + e.getMessage()));
-        }
+        ChatService.SendResult result = chatService.sendMessage(user.getId(), req.getContent(), req.getSessionDate());
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "userMessage", result.userMessage(),
+                "assistantMessage", result.assistantMessage(),
+                "message", result.assistantMessage()
+        ));
     }
 }
