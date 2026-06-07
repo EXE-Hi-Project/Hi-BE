@@ -1,98 +1,152 @@
 package com.hi.api.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hi.api.model.ChatMessage;
 import com.hi.api.repository.ChatRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
-import software.amazon.awssdk.core.SdkBytes;
-import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
-import software.amazon.awssdk.services.bedrockruntime.model.InvokeModelRequest;
-import software.amazon.awssdk.services.bedrockruntime.model.InvokeModelResponse;
 
-import java.util.ArrayList;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 @Service
 public class ChatService {
 
-//    private static final Logger log = LoggerFactory.getLogger(ChatService.class);
-//
-//    private static final String SYSTEM_PROMPT =
-//            "Bạn là trợ lý sức khỏe sinh sản thân thiện của ứng dụng Hi. " +
-//            "Bạn chuyên tư vấn về chu kỳ kinh nguyệt, sức khỏe sinh sản cho cả nam và nữ. " +
-//            "Trả lời bằng tiếng Việt, ngắn gọn, cảm thông và dựa trên kiến thức y khoa. " +
-//            "Nếu câu hỏi nghiêm trọng, hãy khuyên người dùng gặp bác sĩ.";
-//
-//    private final ChatRepository chatRepository;
-//    private final BedrockRuntimeClient bedrockClient;
-//    private final ObjectMapper objectMapper = new ObjectMapper();
-//
-//    @Value("${app.bedrock.model-id:anthropic.claude-3-haiku-20240307-v1:0}")
-//    private String modelId;
-//
-//    public ChatService(ChatRepository chatRepository, BedrockRuntimeClient bedrockClient) {
-//        this.chatRepository = chatRepository;
-//        this.bedrockClient = bedrockClient;
-//    }
-//
-//    public List<ChatMessage> getHistory(String userId) {
-//        return chatRepository.findByUserIdOrderByCreatedAtAsc(
-//                userId, PageRequest.of(0, 100));
-//    }
-//
-//    public ChatMessage sendMessage(String userId, String content) throws Exception {
-//        // Save user message
-//        ChatMessage userMsg = new ChatMessage();
-//        userMsg.setUserId(userId);
-//        userMsg.setRole("user");
-//        userMsg.setContent(content);
-//        chatRepository.save(userMsg);
-//
-//        // Fetch recent history for context (last 10 messages, descending, then reverse)
-//        List<ChatMessage> recent = chatRepository.findByUserIdOrderByCreatedAtDesc(
-//                userId, PageRequest.of(0, 10));
-//        List<Map<String, String>> messages = new ArrayList<>();
-//        for (int i = recent.size() - 1; i >= 0; i--) {
-//            ChatMessage m = recent.get(i);
-//            messages.add(Map.of("role", m.getRole(), "content", m.getContent()));
-//        }
-//
-//        // Build Bedrock request body
-//        Map<String, Object> body = Map.of(
-//                "anthropic_version", "bedrock-2023-05-31",
-//                "max_tokens", 512,
-//                "system", SYSTEM_PROMPT,
-//                "messages", messages
-//        );
-//
-//        String bodyJson = objectMapper.writeValueAsString(body);
-//
-//        InvokeModelRequest request = InvokeModelRequest.builder()
-//                .modelId(modelId)
-//                .contentType("application/json")
-//                .accept("application/json")
-//                .body(SdkBytes.fromUtf8String(bodyJson))
-//                .build();
-//
-//        InvokeModelResponse response = bedrockClient.invokeModel(request);
-//        String responseBody = response.body().asUtf8String();
-//        JsonNode root = objectMapper.readTree(responseBody);
-//        String aiContent = root.path("content").get(0).path("text").asText();
-//
-//        // Save AI message
-//        ChatMessage aiMsg = new ChatMessage();
-//        aiMsg.setUserId(userId);
-//        aiMsg.setRole("assistant");
-//        aiMsg.setContent(aiContent);
-//        chatRepository.save(aiMsg);
-//
-//        return aiMsg;
-//    }
+    private static final ZoneId APP_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+
+    private final ChatRepository chatRepository;
+    private final ChatBoxAIService chatBoxAIService;
+    private final ChatContextService chatContextService;
+
+    public ChatService(ChatRepository chatRepository,
+                       ChatBoxAIService chatBoxAIService,
+                       ChatContextService chatContextService) {
+        this.chatRepository = chatRepository;
+        this.chatBoxAIService = chatBoxAIService;
+        this.chatContextService = chatContextService;
+    }
+
+    public List<ChatMessage> getHistory(String userId, LocalDate requestedDate) {
+        LocalDate sessionDate = defaultSessionDate(requestedDate);
+        List<ChatMessage> currentSession = chatRepository.findByUserIdAndSessionDateOrderByCreatedAtAsc(userId, sessionDate);
+
+        Instant start = sessionDate.atStartOfDay(APP_ZONE).toInstant();
+        Instant end = sessionDate.plusDays(1).atStartOfDay(APP_ZONE).toInstant();
+        List<ChatMessage> legacyMessages = chatRepository.findByUserIdAndCreatedAtBetweenOrderByCreatedAtAsc(userId, start, end);
+
+        Map<String, ChatMessage> byId = new LinkedHashMap<>();
+        currentSession.forEach(message -> byId.put(message.getId(), message));
+        legacyMessages.stream()
+                .filter(message -> message.getSessionDate() == null || sessionDate.equals(message.getSessionDate()))
+                .forEach(message -> byId.putIfAbsent(message.getId(), message));
+
+        return byId.values().stream()
+                .sorted(Comparator.comparing(ChatMessage::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+    }
+
+    public List<ChatSessionSummary> getSessions(String userId, int requestedLimit) {
+        int limit = Math.max(1, Math.min(requestedLimit, 60));
+        int sampleSize = Math.max(120, limit * 40);
+        List<ChatMessage> latest = chatRepository.findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, sampleSize));
+
+        Map<LocalDate, SessionAccumulator> grouped = new LinkedHashMap<>();
+        for (ChatMessage message : latest) {
+            LocalDate date = resolveSessionDate(message);
+            SessionAccumulator accumulator = grouped.computeIfAbsent(date, SessionAccumulator::new);
+            accumulator.count++;
+            if (message.getCreatedAt() != null
+                    && (accumulator.lastMessageAt == null || message.getCreatedAt().isAfter(accumulator.lastMessageAt))) {
+                accumulator.lastMessageAt = message.getCreatedAt();
+            }
+            if ("user".equalsIgnoreCase(message.getRole()) && accumulator.title == null) {
+                accumulator.title = titleFrom(message.getContent());
+            }
+        }
+
+        return grouped.values().stream()
+                .sorted(Comparator.comparing(SessionAccumulator::lastMessageAt, Comparator.nullsLast(Comparator.naturalOrder())).reversed())
+                .limit(limit)
+                .map(accumulator -> new ChatSessionSummary(
+                        accumulator.sessionDate,
+                        accumulator.title == null ? "Cuộc trò chuyện với Hi AI" : accumulator.title,
+                        accumulator.count,
+                        accumulator.lastMessageAt
+                ))
+                .toList();
+    }
+
+    public SendResult sendMessage(String userId, String content, LocalDate requestedDate) {
+        String cleanContent = content.trim();
+        LocalDate sessionDate = defaultSessionDate(requestedDate);
+        String sessionTitle = titleFrom(cleanContent);
+
+        ChatMessage userMessage = new ChatMessage();
+        userMessage.setUserId(userId);
+        userMessage.setRole("user");
+        userMessage.setContent(cleanContent);
+        userMessage.setSessionDate(sessionDate);
+        userMessage.setSessionTitle(sessionTitle);
+        userMessage.setCreatedAt(Instant.now());
+        ChatMessage savedUserMessage = chatRepository.save(userMessage);
+
+        String context = chatContextService.buildContext(userId);
+        String answer = chatBoxAIService.chatOnce(cleanContent, userId, context);
+        ChatMessage assistantMessage = new ChatMessage();
+        assistantMessage.setUserId(userId);
+        assistantMessage.setRole("assistant");
+        assistantMessage.setContent(answer);
+        assistantMessage.setSessionDate(sessionDate);
+        assistantMessage.setSessionTitle(sessionTitle);
+        assistantMessage.setCreatedAt(Instant.now());
+        ChatMessage savedAssistantMessage = chatRepository.save(assistantMessage);
+        return new SendResult(savedUserMessage, savedAssistantMessage);
+    }
+
+    private LocalDate defaultSessionDate(LocalDate requestedDate) {
+        return requestedDate != null ? requestedDate : LocalDate.now(APP_ZONE);
+    }
+
+    private LocalDate resolveSessionDate(ChatMessage message) {
+        if (message.getSessionDate() != null) {
+            return message.getSessionDate();
+        }
+        if (message.getCreatedAt() != null) {
+            return message.getCreatedAt().atZone(APP_ZONE).toLocalDate();
+        }
+        return LocalDate.now(APP_ZONE);
+    }
+
+    private String titleFrom(String content) {
+        if (content == null || content.isBlank()) {
+            return "Cuộc trò chuyện với Hi AI";
+        }
+        String normalized = content.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= 70 ? normalized : normalized.substring(0, 67) + "...";
+    }
+
+    private static class SessionAccumulator {
+        private final LocalDate sessionDate;
+        private String title;
+        private int count;
+        private Instant lastMessageAt;
+
+        private SessionAccumulator(LocalDate sessionDate) {
+            this.sessionDate = sessionDate;
+        }
+
+        private Instant lastMessageAt() {
+            return lastMessageAt;
+        }
+    }
+
+    public record SendResult(ChatMessage userMessage, ChatMessage assistantMessage) {
+    }
+
+    public record ChatSessionSummary(LocalDate sessionDate, String title, int messageCount, Instant lastMessageAt) {
+    }
 }

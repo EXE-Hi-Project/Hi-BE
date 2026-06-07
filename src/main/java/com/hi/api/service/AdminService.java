@@ -1,6 +1,7 @@
 package com.hi.api.service;
 
 import com.hi.api.model.AdminAuditLog;
+import com.hi.api.model.AffiliateRevenueEvent;
 import com.hi.api.model.User;
 import com.hi.api.model.Transaction;
 import com.hi.api.repository.*;
@@ -209,6 +210,26 @@ public class AdminService {
         payosReport.put("transactions", recentTransactions);
 
         result.put("payosReport", payosReport);
+
+        List<AffiliateRevenueEvent> affiliateEvents = mongoTemplate.findAll(AffiliateRevenueEvent.class);
+        long affiliateOrders = affiliateEvents.size();
+        java.math.BigDecimal affiliateCommission = java.math.BigDecimal.ZERO;
+        java.math.BigDecimal affiliateSettledCommission = java.math.BigDecimal.ZERO;
+        for (AffiliateRevenueEvent event : affiliateEvents) {
+            java.math.BigDecimal commission = event.getCommissionAmount() != null
+                    ? event.getCommissionAmount()
+                    : java.math.BigDecimal.ZERO;
+            affiliateCommission = affiliateCommission.add(commission);
+            if ("SETTLED".equalsIgnoreCase(event.getStatus()) || "COMPLETED".equalsIgnoreCase(event.getStatus())) {
+                affiliateSettledCommission = affiliateSettledCommission.add(commission);
+            }
+        }
+        Map<String, Object> affiliateReport = new LinkedHashMap<>();
+        affiliateReport.put("orders", affiliateOrders);
+        affiliateReport.put("totalCommissionVnd", affiliateCommission);
+        affiliateReport.put("settledCommissionVnd", affiliateSettledCommission);
+        affiliateReport.put("totalRevenueVnd", totalRevenueVnd + affiliateSettledCommission.longValue());
+        result.put("affiliateReport", affiliateReport);
 
         // 1. System Mood Index breakdown
         var groupMoodStage = new org.bson.Document("$group",

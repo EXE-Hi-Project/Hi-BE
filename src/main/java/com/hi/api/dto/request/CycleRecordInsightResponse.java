@@ -58,6 +58,11 @@ public class CycleRecordInsightResponse {
     Integer estimatedPeriodDay;
     String fertilityStatus;
     String predictionConfidence;
+    String regularityStatus;
+    Integer regularityScore;
+    String regularityLabel;
+    List<String> regularityReasons;
+    List<CycleTrendPoint> cycleTrendPoints;
     boolean hasOutliers;
     List<String> warnings;
 
@@ -81,5 +86,18 @@ public class CycleRecordInsightResponse {
         Double impactScore;
         Double averageSeverity;
         long occurrenceCount;
+    }
+
+    @Value
+    @Builder
+    public static class CycleTrendPoint {
+        Long cycleId;
+
+        @JsonFormat(pattern = "yyyy-MM-dd")
+        LocalDate startDate;
+
+        Integer cycleLength;
+        Integer periodLength;
+        boolean outlier;
     }
 }

@@ -1,6 +1,9 @@
 package com.hi.api.controller;
 
+import com.hi.api.dto.request.AffiliateLinkPreviewRequest;
 import com.hi.api.dto.request.SyncAffiliateProductsRequest;
+import com.hi.api.dto.request.UpsertAffiliateProductRequest;
+import com.hi.api.dto.request.UpsertAffiliateRevenueRequest;
 import com.hi.api.model.AffiliatePlatform;
 import com.hi.api.model.AffiliateProduct;
 import com.hi.api.model.User;
@@ -42,22 +45,35 @@ public class AffiliateProductController {
 
     @GetMapping("/recommendations")
     public ResponseEntity<Map<String, Object>> recommendations(
-            @RequestParam String symptomCategory,
+            @RequestParam(required = false) String symptomCategory,
+            @RequestParam(required = false) String phase,
             @RequestParam(defaultValue = "8") int limit) {
-        List<AffiliateProduct> products = affiliateProductService.getRecommendations(symptomCategory, limit);
+        List<AffiliateProduct> products = affiliateProductService.getRecommendations(symptomCategory, phase, limit);
         return ResponseEntity.ok(Map.of("success", true, "products", products));
+    }
+
+    @GetMapping("/admin/overview")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> adminOverview() {
+        return ResponseEntity.ok(Map.of("success", true, "overview", affiliateProductService.getAdminOverview()));
     }
 
     @PostMapping("/sync")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<Map<String, Object>> sync(@Valid @RequestBody(required = false) SyncAffiliateProductsRequest req) {
-        AffiliatePlatform platform = req != null && req.getPlatform() != null ? req.getPlatform() : AffiliatePlatform.TIKTOK;
-        if (platform != AffiliatePlatform.TIKTOK) {
-            throw new IllegalArgumentException("Hiện module này chỉ cấu hình sync TikTok Shop");
+    public ResponseEntity<Map<String, Object>> sync(
+            @Valid @RequestBody(required = false) SyncAffiliateProductsRequest req,
+            @RequestParam(required = false) AffiliatePlatform platform) {
+        if (platform == null && req != null) {
+            platform = req.getPlatform();
         }
+        Map<String, Object> result = affiliateProductService.sync(platform);
+        return ResponseEntity.ok(Map.of("success", true, "result", result));
+    }
 
-        Map<String, Object> result = affiliateProductService.syncFromTiktok();
-        return ResponseEntity.ok(Map.of("success", true, "syncResult", result));
+    @PostMapping("/preview-link")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> previewLink(@Valid @RequestBody AffiliateLinkPreviewRequest req) {
+        return ResponseEntity.ok(Map.of("success", true, "preview", affiliateProductService.previewLink(req.getUrl())));
     }
 
     @GetMapping("/{id}")
@@ -66,9 +82,36 @@ public class AffiliateProductController {
         return ResponseEntity.ok(Map.of("success", true, "product", product));
     }
 
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> create(@Valid @RequestBody UpsertAffiliateProductRequest req) {
+        AffiliateProduct product = affiliateProductService.createProduct(req);
+        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("success", true, "product", product));
+    }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> update(@PathVariable Long id, @Valid @RequestBody UpsertAffiliateProductRequest req) {
+        AffiliateProduct product = affiliateProductService.updateProduct(id, req);
+        return ResponseEntity.ok(Map.of("success", true, "product", product));
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> delete(@PathVariable Long id) {
+        affiliateProductService.deleteProduct(id);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Đã ẩn sản phẩm affiliate"));
+    }
+
+    @PostMapping("/revenue-events")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> upsertRevenue(@Valid @RequestBody UpsertAffiliateRevenueRequest req) {
+        return ResponseEntity.ok(Map.of("success", true, "revenueEvent", affiliateProductService.upsertRevenue(req)));
+    }
+
     @PostMapping("/{id}/click")
     public ResponseEntity<Map<String, Object>> trackClick(@AuthenticationPrincipal User user, @PathVariable Long id) {
-        Map<String, Object> result = clickTrackingService.trackClick(user.getId(), id);
+        Map<String, Object> result = clickTrackingService.trackClick(user != null ? user.getId() : null, id);
         return ResponseEntity.status(HttpStatus.CREATED).body(Map.of("success", true, "data", result));
     }
 }

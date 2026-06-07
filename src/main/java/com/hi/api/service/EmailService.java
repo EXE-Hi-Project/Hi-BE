@@ -23,23 +23,34 @@ public class EmailService {
     }
 
     public void sendOtpEmail(String to, String name, String otp) {
-        log.info("[EMAIL] Chuẩn bị gửi OTP đến: {}", to);
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(fromEmail);
-        message.setTo(to);
-        message.setSubject("Mã OTP đặt lại mật khẩu - Hi App");
-        message.setText("Xin chào " + (name != null && !name.isBlank() ? name : "bạn") + ",\n\n" +
+        String displayName = name != null && !name.isBlank() ? name : "bạn";
+        String body = "Xin chào " + displayName + ",\n\n" +
                 "Mã OTP đặt lại mật khẩu của bạn là:\n\n" +
                 "    " + otp + "\n\n" +
                 "Mã này có hiệu lực trong 15 phút. Không chia sẻ mã này với bất kỳ ai.\n" +
                 "Nếu bạn không yêu cầu đổi mật khẩu, vui lòng bỏ qua email này.\n\n" +
-                "Trân trọng,\nĐội ngũ Hi Lover");
+                "Trân trọng,\nĐội ngũ Hi Lover";
+        sendRequiredEmail(to, "Mã OTP đặt lại mật khẩu - Hi App", body);
+    }
+
+    public boolean sendOptionalEmail(String to, String subject, String body) {
         try {
-            mailSender.send(message);
-            log.info("[EMAIL] Gửi OTP thành công đến: {}", to);
+            sendRequiredEmail(to, subject, body);
+            return true;
         } catch (MailException ex) {
-            log.error("[EMAIL] THẤT BẠI khi gửi OTP đến {}: {}", to, ex.getMessage(), ex);
-            throw ex;
+            log.warn("[EMAIL] Không gửi được email tùy chọn tới {}: {}", to, ex.getMessage());
+            return false;
         }
+    }
+
+    private void sendRequiredEmail(String to, String subject, String body) {
+        log.info("[EMAIL] Chuẩn bị gửi email đến: {}", to);
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(to);
+        message.setSubject(subject);
+        message.setText(body);
+        mailSender.send(message);
+        log.info("[EMAIL] Gửi email thành công đến: {}", to);
     }
 }

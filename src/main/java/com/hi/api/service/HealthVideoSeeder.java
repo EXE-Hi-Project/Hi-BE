@@ -2,6 +2,7 @@ package com.hi.api.service;
 
 import com.hi.api.model.HealthVideo;
 import com.hi.api.model.HealthVideoStatus;
+import com.hi.api.model.HealthVideoTargetAudience;
 import com.hi.api.repository.HealthVideoRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -54,6 +55,9 @@ public class HealthVideoSeeder implements ApplicationRunner {
         video.setLanguage(item.language());
         video.setPriority(item.priority());
         video.setStatus(HealthVideoStatus.PUBLISHED);
+        if (video.getTargetAudience() == null) {
+            video.setTargetAudience(HealthVideoTargetAudience.BOTH);
+        }
         video.setReviewedAt(Instant.now());
         video.setReviewedBy(SYSTEM_REVIEWER);
         return video;

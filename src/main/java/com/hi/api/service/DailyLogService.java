@@ -127,7 +127,19 @@ public class DailyLogService {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("dailyLog", saved);
         response.put("partnerNotificationSent", partnerNotificationSent);
+        response.put("latestMood", moodResponse(saved));
         return response;
+    }
+
+    private Map<String, Object> moodResponse(DailyLog log) {
+        if (log == null || log.getMoodScore() == null) {
+            return null;
+        }
+        Map<String, Object> mood = new LinkedHashMap<>();
+        mood.put("moodScore", log.getMoodScore());
+        mood.put("label", moodLabel(log.getMoodScore()));
+        mood.put("logDate", log.getLogDate());
+        return mood;
     }
 
     private boolean notifyPartnerMood(String userId, Integer moodScore) {
@@ -136,6 +148,8 @@ public class DailyLogService {
         }
         return userRepository.findById(userId)
                 .filter(user -> user.getPartnerId() != null && !user.getPartnerId().isBlank())
+                .filter(user -> user.getNotificationPreferences() == null
+                        || !Boolean.FALSE.equals(user.getNotificationPreferences().getPartnerMoodUpdatesEnabled()))
                 .map(user -> {
                     String senderName = user.getName() != null && !user.getName().isBlank() ? user.getName() : "Người ấy";
                     notificationService.createNotification(

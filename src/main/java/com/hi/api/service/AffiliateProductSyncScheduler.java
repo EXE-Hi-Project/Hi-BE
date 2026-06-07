@@ -22,16 +22,18 @@ public class AffiliateProductSyncScheduler {
     }
 
     @Scheduled(cron = "${app.affiliate.sync.cron:0 0 */6 * * *}")
-    public void syncTiktokProducts() {
+    public void syncAffiliateProducts() {
         if (!enabled) {
             return;
         }
 
-        try {
-            affiliateProductService.syncFromTiktok();
-            log.info("Affiliate product sync completed for {}", AffiliatePlatform.TIKTOK);
-        } catch (Exception ex) {
-            log.warn("Affiliate product sync failed for {}: {}", AffiliatePlatform.TIKTOK, ex.getMessage());
+        for (AffiliatePlatform platform : new AffiliatePlatform[]{AffiliatePlatform.TIKTOK, AffiliatePlatform.SHOPEE}) {
+            try {
+                affiliateProductService.sync(platform);
+                log.info("Affiliate product sync completed for {}", platform);
+            } catch (Exception ex) {
+                log.warn("Affiliate product sync failed for {}: {}", platform, ex.getMessage());
+            }
         }
     }
 }

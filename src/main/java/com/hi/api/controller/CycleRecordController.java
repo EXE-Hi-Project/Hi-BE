@@ -6,6 +6,7 @@ import com.hi.api.dto.request.UpdateCycleRecordRequest;
 import com.hi.api.model.CycleRecord;
 import com.hi.api.model.User;
 import com.hi.api.service.CycleRecordService;
+import com.hi.api.service.DailyLogService;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -23,9 +24,11 @@ import java.util.Map;
 public class CycleRecordController {
 
     private final CycleRecordService cycleRecordService;
+    private final DailyLogService dailyLogService;
 
-    public CycleRecordController(CycleRecordService cycleRecordService) {
+    public CycleRecordController(CycleRecordService cycleRecordService, DailyLogService dailyLogService) {
         this.cycleRecordService = cycleRecordService;
+        this.dailyLogService = dailyLogService;
     }
 
     @GetMapping
@@ -58,6 +61,22 @@ public class CycleRecordController {
                 "page", records.getNumber(),
                 "limit", records.getSize(),
                 "hasMore", records.hasNext()
+        ));
+    }
+
+    @GetMapping("/{id}/symptom-history")
+    public ResponseEntity<Map<String, Object>> getSymptomHistory(
+            @AuthenticationPrincipal User user,
+            @PathVariable Long id) {
+        CycleRecord record = cycleRecordService.getCycleRecord(user.getId(), id);
+        LocalDate startDate = record.getStartDate();
+        LocalDate endDate = record.getEndDate() != null
+                ? record.getEndDate()
+                : startDate.plusDays(Math.max(record.getPeriodLength() != null ? record.getPeriodLength() : 5, 1) - 1L);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "cycleRecord", record,
+                "dailyLogs", dailyLogService.getLogs(user.getId(), startDate, endDate)
         ));
     }
 

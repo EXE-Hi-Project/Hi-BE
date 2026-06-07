@@ -46,6 +46,9 @@ public class HealthVideo {
     @Indexed
     private HealthVideoStatus status = HealthVideoStatus.DRAFT;
 
+    @Indexed
+    private HealthVideoTargetAudience targetAudience = HealthVideoTargetAudience.BOTH;
+
     private Instant reviewedAt;
     private String reviewedBy;
 
