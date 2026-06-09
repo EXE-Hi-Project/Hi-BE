@@ -51,15 +51,17 @@ public class DailyLogService {
     }
 
     public List<DailyLog> getLogs(String userId, LocalDate from, LocalDate to) {
-        List<DailyLog> logs;
-        if (from != null && to != null) {
-            logs = dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(userId, from, to);
-        } else if (from != null) {
-            logs = dailyLogRepository.findByUserIdAndLogDateGreaterThanEqualOrderByLogDateDesc(userId, from);
-        } else if (to != null) {
-            logs = dailyLogRepository.findByUserIdAndLogDateLessThanEqualOrderByLogDateDesc(userId, to);
-        } else {
-            logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
+        List<DailyLog> logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
+        if (from != null || to != null) {
+            logs = logs.stream()
+                    .filter(log -> {
+                        LocalDate d = log.getLogDate();
+                        if (d == null) return false;
+                        boolean afterFrom = (from == null || !d.isBefore(from));
+                        boolean beforeTo = (to == null || !d.isAfter(to));
+                        return afterFrom && beforeTo;
+                    })
+                    .collect(Collectors.toList());
         }
         attachSymptoms(logs);
         return logs;
