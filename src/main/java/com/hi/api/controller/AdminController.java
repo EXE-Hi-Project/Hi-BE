@@ -6,6 +6,7 @@ import com.hi.api.dto.request.AdminUserNotificationRequest;
 import com.hi.api.model.User;
 import com.hi.api.service.AdminService;
 import com.hi.api.service.ReminderService;
+import com.hi.api.service.AnalyticsService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -26,15 +27,24 @@ public class AdminController {
 
     private final AdminService adminService;
     private final ReminderService reminderService;
+    private final AnalyticsService analyticsService;
 
-    public AdminController(AdminService adminService, ReminderService reminderService) {
+    public AdminController(AdminService adminService, ReminderService reminderService, AnalyticsService analyticsService) {
         this.adminService = adminService;
         this.reminderService = reminderService;
+        this.analyticsService = analyticsService;
     }
 
     @GetMapping("/overview")
     public ResponseEntity<Map<String, Object>> getOverview() {
         Map<String, Object> data = adminService.getOverview();
+        data.put("success", true);
+        return ResponseEntity.ok(data);
+    }
+
+    @GetMapping("/analytics/stats")
+    public ResponseEntity<Map<String, Object>> getAnalyticsStats() {
+        Map<String, Object> data = analyticsService.getAnalyticsStats();
         data.put("success", true);
         return ResponseEntity.ok(data);
     }

@@ -105,8 +105,23 @@ public class CycleRecordService {
     public CycleRecord updateCycleRecord(String userId, Long id, UpdateCycleRecordRequest req) {
         CycleRecord record = cycleRecordRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
+
+        List<CycleRecord> userCycles = cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId);
+        boolean isLatest = !userCycles.isEmpty() && userCycles.get(0).getId().equals(id);
+
         LocalDate effectiveStartDate = req.getStartDate() != null ? req.getStartDate() : record.getStartDate();
         ensureUniqueStartDate(userId, effectiveStartDate, id);
+
+        // If it is the latest cycle, allow clearing the end date if requested
+        if (isLatest && req.getEndDate() == null) {
+            record.setEndDate(null);
+            User user = userRepository.findById(userId).orElse(null);
+            int defaultPeriodLen = (user != null && user.getDefaultPeriodLength() != null)
+                    ? user.getDefaultPeriodLength()
+                    : DEFAULT_PERIOD_LENGTH;
+            record.setPeriodLength(defaultPeriodLen);
+        }
+
         apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(), req.getIsIgnored());
         ensureNoOverlap(userId, record, id);
         return cycleRecordRepository.save(record);
