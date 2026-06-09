@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
+import org.springframework.cache.annotation.Cacheable;
 
 @Service
 public class ChatContextService {
@@ -51,6 +52,7 @@ public class ChatContextService {
         this.affiliateProductRepository = affiliateProductRepository;
     }
 
+    @Cacheable(value = "ai_context", key = "#userId")
     public String buildContext(String userId) {
         Optional<User> maybeUser = userRepository.findById(userId);
         if (maybeUser.isEmpty()) {
@@ -146,7 +148,20 @@ public class ChatContextService {
         LocalDate start = latest.getStartDate();
         int periodLength = latest.getPeriodLength() != null ? latest.getPeriodLength() : 5;
         LocalDate end = latest.getEndDate() != null ? latest.getEndDate() : latest.getStartDate().plusDays(Math.max(1, periodLength) - 1L);
-        List<DailyLog> logs = dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(userId, start, end);
+        List<DailyLog> logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
+        if (start != null || end != null) {
+            final LocalDate finalStart = start;
+            final LocalDate finalEnd = end;
+            logs = logs.stream()
+                    .filter(logItem -> {
+                        LocalDate d = logItem.getLogDate();
+                        if (d == null) return false;
+                        boolean afterStart = (finalStart == null || !d.isBefore(finalStart));
+                        boolean beforeEnd = (finalEnd == null || !d.isAfter(finalEnd));
+                        return afterStart && beforeEnd;
+                    })
+                    .collect(Collectors.toList());
+        }
         if (logs.isEmpty()) {
             context.append("- Triệu chứng trong kỳ gần nhất: chưa có nhật ký triệu chứng.\n");
             return;

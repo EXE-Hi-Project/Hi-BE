@@ -16,6 +16,7 @@ import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
 import com.hi.api.repository.UserRepository;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -80,6 +81,7 @@ public class CycleRecordService {
         return records;
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public CycleRecord createCycleRecord(String userId, CreateCycleRecordRequest req) {
         ensureUniqueStartDate(userId, req.getStartDate(), null);
         CycleRecord record = new CycleRecord();
@@ -99,6 +101,7 @@ public class CycleRecordService {
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public CycleRecord updateCycleRecord(String userId, Long id, UpdateCycleRecordRequest req) {
         CycleRecord record = cycleRecordRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
@@ -109,6 +112,7 @@ public class CycleRecordService {
         return cycleRecordRepository.save(record);
     }
 
+    @CacheEvict(value = "ai_context", key = "#user.id")
     public CycleRecord upsertInitialFromProfile(User user) {
         if (user == null || user.getId() == null || user.getLastPeriodDate() == null || user.getLastPeriodDate().isBlank()) {
             return null;
@@ -133,6 +137,7 @@ public class CycleRecordService {
         }
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public CycleRecord confirmPeriodStart(String userId, LocalDate startDate) {
         if (startDate == null) {
             throw new IllegalArgumentException("Ngày bắt đầu là bắt buộc");
@@ -151,6 +156,7 @@ public class CycleRecordService {
                 });
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public void deleteCycleRecord(String userId, Long id) {
         CycleRecord record = cycleRecordRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
