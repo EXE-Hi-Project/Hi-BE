@@ -30,7 +30,7 @@ public class ChatController {
         this.chatService = chatService;
     }
 
-    @GetMapping({"", "/"})
+    @GetMapping({"", "/", "/history"})
     public ResponseEntity<Map<String, Object>> getHistory(
             @AuthenticationPrincipal User user,
             @RequestParam(required = false) LocalDate sessionDate) {

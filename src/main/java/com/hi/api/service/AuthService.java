@@ -72,6 +72,9 @@ public class AuthService {
 
     private void assertAccountCanAuthenticate(User user) {
         String status = user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE";
+        if ("PENDING_ACTIVATION".equalsIgnoreCase(status)) {
+            throw new IllegalArgumentException("PENDING_ACTIVATION");
+        }
         if ("LOCKED".equalsIgnoreCase(status)) {
             throw new IllegalArgumentException("Tài khoản của bạn đang bị khóa. Vui lòng liên hệ quản trị viên.");
         }
@@ -94,9 +97,31 @@ public class AuthService {
         user.setAuthProvider("local");
         user.setRole(getAdminEmails().contains(email) ? "admin" : "user");
         user.setPartnerCode(generatePartnerCode());
+        user.setAccountStatus("PENDING_ACTIVATION");
 
         userRepository.save(user);
-        return buildAuthPayload(user);
+
+        // Sinh mã OTP 6 số ngẫu nhiên
+        String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
+        String otpHash = hashToken(otp);
+
+        PasswordResetToken activationToken = new PasswordResetToken();
+        activationToken.setUserId(user.getId());
+        activationToken.setOtpHash(otpHash);
+        activationToken.setOtpVerified(false);
+        activationToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
+        tokenRepository.save(activationToken);
+
+        try {
+            emailService.sendRegistrationOtpEmail(user.getEmail(), user.getName(), otp);
+        } catch (Exception ex) {
+            log.error("[REGISTER] Gửi email kích hoạt OTP thất bại cho {}: {}", email, ex.getMessage());
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("email", email);
+        response.put("pendingActivation", true);
+        return response;
     }
 
     public Map<String, Object> login(LoginRequest req) {
@@ -365,5 +390,63 @@ public class AuthService {
         userRepository.save(user);
         resetToken.setUsedAt(Instant.now());
         tokenRepository.save(resetToken);
+    }
+
+    public Map<String, Object> verifyActivation(VerifyOtpRequest req) {
+        String email = req.getEmail().trim().toLowerCase();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("Tài khoản không tồn tại"));
+
+        if ("ACTIVE".equalsIgnoreCase(user.getAccountStatus())) {
+            throw new IllegalArgumentException("Tài khoản này đã được kích hoạt từ trước.");
+        }
+
+        String otpHash = hashToken(req.getOtp());
+        PasswordResetToken token = tokenRepository
+                .findByUserIdAndOtpHashAndUsedAtIsNull(user.getId(), otpHash)
+                .orElseThrow(() -> new IllegalArgumentException("Mã OTP không đúng hoặc đã hết hạn"));
+
+        if (token.getExpiresAt().isBefore(Instant.now())) {
+            throw new IllegalArgumentException("Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.");
+        }
+
+        user.setAccountStatus("ACTIVE");
+        userRepository.save(user);
+
+        token.setUsedAt(Instant.now());
+        token.setOtpVerified(true);
+        tokenRepository.save(token);
+
+        return buildAuthPayload(user);
+    }
+
+    public void resendActivationOtp(String email) {
+        String cleanEmail = email.trim().toLowerCase();
+        User user = userRepository.findByEmail(cleanEmail)
+                .orElseThrow(() -> new IllegalArgumentException("Tài khoản không tồn tại"));
+
+        if ("ACTIVE".equalsIgnoreCase(user.getAccountStatus())) {
+            throw new IllegalArgumentException("Tài khoản đã được kích hoạt.");
+        }
+
+        // Vô hiệu hóa các OTP cũ
+        List<PasswordResetToken> oldTokens = tokenRepository.findByUserIdAndUsedAtIsNull(user.getId());
+        for (PasswordResetToken t : oldTokens) {
+            t.setUsedAt(Instant.now());
+            tokenRepository.save(t);
+        }
+
+        // Sinh mã OTP mới
+        String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
+        String otpHash = hashToken(otp);
+
+        PasswordResetToken activationToken = new PasswordResetToken();
+        activationToken.setUserId(user.getId());
+        activationToken.setOtpHash(otpHash);
+        activationToken.setOtpVerified(false);
+        activationToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
+        tokenRepository.save(activationToken);
+
+        emailService.sendRegistrationOtpEmail(user.getEmail(), user.getName(), otp);
     }
 }

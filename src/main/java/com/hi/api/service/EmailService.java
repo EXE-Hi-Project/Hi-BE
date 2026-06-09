@@ -58,6 +58,35 @@ public class EmailService {
     }
 
     /**
+     * Gửi mã OTP xác thực tài khoản khi đăng ký dưới dạng giao diện HTML cao cấp
+     */
+    @Async("mailExecutor")
+    public void sendRegistrationOtpEmail(String to, String name, String otp) {
+        String displayName = name != null && !name.isBlank() ? name : "bạn";
+        String heading = "Chào mừng " + displayName + " đến với Hi,";
+        String body = "<p style=\"margin: 0 0 15px 0;\">Hi vô cùng hạnh phúc khi được đồng hành cùng bạn trên hành trình chăm sóc sức khỏe sinh sản. Để kích hoạt tài khoản của bạn, vui lòng sử dụng mã OTP dưới đây nha:</p>" +
+                "<div style=\"text-align: center; margin: 30px 0;\">" +
+                "  <span style=\"display: inline-block; background-color: #f0f9ff; border: 2px dashed #38bdf8; color: #0284c7; font-size: 32px; font-weight: 700; padding: 12px 35px; letter-spacing: 5px; border-radius: 16px;\">" +
+                otp +
+                "  </span>" +
+                "</div>" +
+                "<p style=\"color: #0284c7; font-weight: 600; margin: 0 0 15px 0;\">Mã này có hiệu lực trong vòng 15 phút. Hãy nhập mã để kích hoạt tài khoản của bạn nhé!</p>" +
+                "<p style=\"margin: 0;\">Nếu bạn không thực hiện đăng ký tài khoản trên Hi, vui lòng bỏ qua email này.</p>";
+
+        String html = buildHtmlTemplate(
+                "Xác minh tài khoản Hi App",
+                heading,
+                body,
+                null,
+                null,
+                to,
+                "Thương bạn,"
+        );
+
+        sendRequiredEmail(to, "Xác minh tài khoản của bạn - Hi App", html, true);
+    }
+
+    /**
      * Email hỏi thăm sức khỏe hằng ngày
      */
     @Async("mailExecutor")

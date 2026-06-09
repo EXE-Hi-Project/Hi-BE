@@ -8,4 +8,5 @@ public interface PasswordResetTokenRepository extends MongoRepository<PasswordRe
     Optional<PasswordResetToken> findByTokenHashAndUsedAtIsNull(String tokenHash);
     Optional<PasswordResetToken> findByUserIdAndOtpHashAndUsedAtIsNull(String userId, String otpHash);
     Optional<PasswordResetToken> findByTokenHashAndUsedAtIsNullAndOtpVerifiedTrue(String tokenHash);
+    java.util.List<PasswordResetToken> findByUserIdAndUsedAtIsNull(String userId);
 }
