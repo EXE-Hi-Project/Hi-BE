@@ -115,6 +115,11 @@ public class CycleRecordService {
         // If it is the latest cycle, allow clearing the end date if requested
         if (isLatest && req.getEndDate() == null) {
             record.setEndDate(null);
+            User user = userRepository.findById(userId).orElse(null);
+            int defaultPeriodLen = (user != null && user.getDefaultPeriodLength() != null)
+                    ? user.getDefaultPeriodLength()
+                    : DEFAULT_PERIOD_LENGTH;
+            record.setPeriodLength(defaultPeriodLen);
         }
 
         apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(), req.getIsIgnored());
