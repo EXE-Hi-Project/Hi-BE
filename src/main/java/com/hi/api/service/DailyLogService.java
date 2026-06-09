@@ -13,6 +13,7 @@ import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
 import com.hi.api.repository.UserRepository;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -51,15 +52,17 @@ public class DailyLogService {
     }
 
     public List<DailyLog> getLogs(String userId, LocalDate from, LocalDate to) {
-        List<DailyLog> logs;
-        if (from != null && to != null) {
-            logs = dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(userId, from, to);
-        } else if (from != null) {
-            logs = dailyLogRepository.findByUserIdAndLogDateGreaterThanEqualOrderByLogDateDesc(userId, from);
-        } else if (to != null) {
-            logs = dailyLogRepository.findByUserIdAndLogDateLessThanEqualOrderByLogDateDesc(userId, to);
-        } else {
-            logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
+        List<DailyLog> logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
+        if (from != null || to != null) {
+            logs = logs.stream()
+                    .filter(log -> {
+                        LocalDate d = log.getLogDate();
+                        if (d == null) return false;
+                        boolean afterFrom = (from == null || !d.isBefore(from));
+                        boolean beforeTo = (to == null || !d.isAfter(to));
+                        return afterFrom && beforeTo;
+                    })
+                    .collect(Collectors.toList());
         }
         attachSymptoms(logs);
         return logs;
@@ -72,6 +75,7 @@ public class DailyLogService {
         return log;
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public DailyLog upsertLog(String userId, LocalDate logDate, UpsertDailyLogRequest req) {
         validateLogDate(logDate);
         DailyLog log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate)
@@ -105,6 +109,7 @@ public class DailyLogService {
         return saved;
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public Map<String, Object> updateMood(String userId, LocalDate logDate, UpdateDailyLogMoodRequest req) {
         validateLogDate(logDate);
         DailyLog log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate)
@@ -176,6 +181,7 @@ public class DailyLogService {
         };
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public void deleteLog(String userId, LocalDate logDate) {
         DailyLog log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy nhật ký ngày này"));
@@ -183,6 +189,7 @@ public class DailyLogService {
         dailyLogRepository.delete(log);
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public DailyLogSymptom upsertSymptom(String userId, LocalDate logDate, Long symptomId,
                                          UpsertDailyLogSymptomRequest req) {
         validateLogDate(logDate);
@@ -214,6 +221,7 @@ public class DailyLogService {
         return saved;
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public void deleteSymptom(String userId, LocalDate logDate, Long symptomId) {
         DailyLog log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy nhật ký ngày này"));

@@ -147,4 +147,31 @@ public class AuthController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
     }
+
+    @PostMapping("/verify-activation")
+    public ResponseEntity<Map<String, Object>> verifyActivation(@Valid @RequestBody VerifyOtpRequest req) {
+        try {
+            Map<String, Object> payload = authService.verifyActivation(req);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Kích hoạt tài khoản thành công");
+            response.put("data", payload);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/resend-activation")
+    public ResponseEntity<Map<String, Object>> resendActivation(@RequestParam String email) {
+        try {
+            authService.resendActivationOtp(email);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Mã kích hoạt OTP mới đã được gửi đến email của bạn");
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
 }

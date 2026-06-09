@@ -9,6 +9,8 @@ import com.hi.api.model.User;
 import com.hi.api.repository.CycleRecordRepository;
 import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.UserRepository;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -29,19 +31,23 @@ public class UserService {
     private final DailyLogRepository dailyLogRepository;
     private final CycleRecordService cycleRecordService;
     private final NotificationService notificationService;
+    private final CacheManager cacheManager;
 
     public UserService(UserRepository userRepository,
                        CycleRecordRepository cycleRecordRepository,
                        DailyLogRepository dailyLogRepository,
                        CycleRecordService cycleRecordService,
-                       NotificationService notificationService) {
+                       NotificationService notificationService,
+                       CacheManager cacheManager) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogRepository = dailyLogRepository;
         this.cycleRecordService = cycleRecordService;
         this.notificationService = notificationService;
+        this.cacheManager = cacheManager;
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public User updateProfile(String userId, UpdateProfileRequest req) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
@@ -82,6 +88,7 @@ public class UserService {
         return ensureNotificationPreferences(user);
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public User.NotificationPreferences updateNotificationSettings(String userId, NotificationSettingsRequest req) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
@@ -214,6 +221,7 @@ public class UserService {
         throw new IllegalArgumentException("Giới tính onboarding không được hỗ trợ");
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     @Transactional
     public Map<String, Object> connectPartner(String userId, ConnectPartnerRequest req) {
         User user = userRepository.findById(userId)
@@ -239,6 +247,11 @@ public class UserService {
         User savedUser = userRepository.save(user);
         User savedPartner = userRepository.save(partner);
 
+        // Clear partner's cached AI context
+        if (cacheManager != null && cacheManager.getCache("ai_context") != null) {
+            cacheManager.getCache("ai_context").evict(partner.getId());
+        }
+
         notificationService.createNotification(
                 savedUser.getId(), "PARTNER_CONNECT", "Kết nối thành công",
                 "Bạn đã kết nối với " + displayName(savedPartner, "Người ấy")
@@ -255,6 +268,7 @@ public class UserService {
         );
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     @Transactional
     public Map<String, Object> disconnectPartner(String userId) {
         User user = userRepository.findById(userId)
@@ -270,6 +284,12 @@ public class UserService {
 
                 partner.setPartnerId(null);
                 userRepository.save(partner);
+
+                // Clear partner's cached AI context
+                if (cacheManager != null && cacheManager.getCache("ai_context") != null) {
+                    cacheManager.getCache("ai_context").evict(partner.getId());
+                }
+
                 notificationService.createNotification(
                         partner.getId(), "PARTNER_DISCONNECT", "Hủy kết nối",
                         displayName(user, "Người ấy") + " đã hủy kết nối với bạn"

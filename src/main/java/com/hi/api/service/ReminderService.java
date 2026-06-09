@@ -26,17 +26,23 @@ public class ReminderService {
     private final NotificationService notificationService;
     private final EmailService emailService;
     private final DailyLogRepository dailyLogRepository;
+    private final ChatBoxAIService chatBoxAIService;
+    private final ChatContextService chatContextService;
 
     public ReminderService(UserRepository userRepository,
                            CycleRecordService cycleRecordService,
                            NotificationService notificationService,
                            EmailService emailService,
-                           DailyLogRepository dailyLogRepository) {
+                           DailyLogRepository dailyLogRepository,
+                           ChatBoxAIService chatBoxAIService,
+                           ChatContextService chatContextService) {
         this.userRepository = userRepository;
         this.cycleRecordService = cycleRecordService;
         this.notificationService = notificationService;
         this.emailService = emailService;
         this.dailyLogRepository = dailyLogRepository;
+        this.chatBoxAIService = chatBoxAIService;
+        this.chatContextService = chatContextService;
     }
 
     @Scheduled(cron = "0 0 8 * * ?", zone = "Asia/Ho_Chi_Minh")
@@ -64,7 +70,7 @@ public class ReminderService {
         generateDailyReminders();
     }
 
-    @Scheduled(cron = "0 */15 * * * ?", zone = "Asia/Ho_Chi_Minh")
+    @Scheduled(cron = "0 0/15 * * * ?", zone = "Asia/Ho_Chi_Minh")
     public void generateSymptomLogReminders() {
         ZoneId zone = ZoneId.of("Asia/Ho_Chi_Minh");
         LocalDate today = LocalDate.now(zone);
@@ -98,7 +104,7 @@ public class ReminderService {
 
         String dedupeKey = "DAILY_CHECK_IN:" + user.getId() + ":" + today;
         boolean alreadySent = notificationService.existsByDedupeKey(user.getId(), "DAILY_CHECK_IN", dedupeKey);
-        String message = "Hôm nay bạn cảm thấy thế nào? Chạm để ghi nhanh cảm xúc và nhận gợi ý chăm sóc phù hợp.";
+        String message = getDailyTipMessage(user);
 
         if (!alreadySent) {
             notificationService.createIdempotentNotification(
@@ -359,5 +365,52 @@ public class ReminderService {
         if (prefs.getPartnerNudgeTime() == null || prefs.getPartnerNudgeTime().isBlank()) prefs.setPartnerNudgeTime("21:00");
         if (prefs.getAiResponseStyle() == null || prefs.getAiResponseStyle().isBlank()) prefs.setAiResponseStyle("FRIENDLY");
         return prefs;
+    }
+
+    private String getDailyTipMessage(User user) {
+        // 1. Try AI Generation
+        try {
+            if (chatBoxAIService != null && chatContextService != null) {
+                String context = chatContextService.buildContext(user.getId());
+                String prompt = "Hãy tạo 1 lời khuyên sức khỏe hoặc lời hỏi thăm ngắn gọn, ấm áp (dưới 80 từ) cho ngày hôm nay bằng tiếng Việt. Hãy xưng là 'Hi' và gọi người dùng là 'bạn'. Tập trung vào trạng thái chu kỳ hoặc triệu chứng gần đây của họ nếu có.";
+                String aiResponse = chatBoxAIService.chatOnce(prompt, user.getId(), context);
+                if (aiResponse != null && !aiResponse.isBlank() && !aiResponse.contains("Hi AI đang cần cấu hình")) {
+                    return aiResponse.trim();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Không thể tạo lời khuyên AI cho user {}: {}", user.getId(), e.getMessage());
+        }
+
+        // 2. Fallback to Rule-based Tip
+        return getFallbackTip(user);
+    }
+
+    private String getFallbackTip(User user) {
+        if ("male".equalsIgnoreCase(user.getGender())) {
+            return "Hôm nay của bạn thế nào rồi? Đừng quên gửi lời hỏi thăm nhẹ nhàng đến Người ấy và chăm sóc bản thân thật tốt nhé!";
+        }
+        
+        // Female
+        try {
+            CycleRecordInsightResponse insights = cycleRecordService.getInsights(user.getId());
+            if (insights != null) {
+                String periodStatus = insights.getPeriodStatus(); // "CONFIRMED", "PREDICTED", "DELAYED", "NONE"
+                if ("CONFIRMED".equalsIgnoreCase(periodStatus) || "PREDICTED".equalsIgnoreCase(periodStatus)) {
+                    return "Bạn đang trong kỳ kinh nguyệt nè. Hãy nhớ giữ ấm bụng, uống nhiều nước ấm và nghỉ ngơi nhiều hơn nhé. Hi luôn ở bên bạn!";
+                } else if ("DELAYED".equalsIgnoreCase(periodStatus)) {
+                    return "Kỳ kinh của bạn đang trễ một xíu rồi đó. Hãy thư giãn đầu óc, tránh căng thẳng và ghi lại các biểu hiện để Hi theo dõi nha.";
+                }
+                
+                LocalDate today = LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh"));
+                LocalDate fertileStart = insights.getFertileWindowStartDate();
+                LocalDate fertileEnd = insights.getFertileWindowEndDate();
+                if (fertileStart != null && fertileEnd != null && !today.isBefore(fertileStart) && !today.isAfter(fertileEnd)) {
+                    return "Bạn đang trong cửa sổ thụ thai ước tính đó. Hãy lắng nghe cơ thể, ăn uống đầy đủ dinh dưỡng và giữ tinh thần vui tươi nhé!";
+                }
+            }
+        } catch (Exception ignored) {}
+        
+        return "Hôm nay của bạn thế nào rồi? Hãy dành ra vài giây chạm nhẹ để ghi lại cảm xúc và triệu chứng hôm nay nhé, Hi đợi bạn!";
     }
 }

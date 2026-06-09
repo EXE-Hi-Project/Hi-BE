@@ -16,6 +16,7 @@ import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
 import com.hi.api.repository.UserRepository;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -65,18 +66,22 @@ public class CycleRecordService {
     }
 
     public List<CycleRecord> getCycleRecords(String userId, LocalDate from, LocalDate to) {
-        if (from != null && to != null) {
-            return cycleRecordRepository.findByUserIdAndStartDateBetweenOrderByStartDateDesc(userId, from, to);
+        List<CycleRecord> records = cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId);
+        if (from != null || to != null) {
+            records = records.stream()
+                    .filter(record -> {
+                        LocalDate d = record.getStartDate();
+                        if (d == null) return false;
+                        boolean afterFrom = (from == null || !d.isBefore(from));
+                        boolean beforeTo = (to == null || !d.isAfter(to));
+                        return afterFrom && beforeTo;
+                    })
+                    .collect(java.util.stream.Collectors.toList());
         }
-        if (from != null) {
-            return cycleRecordRepository.findByUserIdAndStartDateGreaterThanEqualOrderByStartDateDesc(userId, from);
-        }
-        if (to != null) {
-            return cycleRecordRepository.findByUserIdAndStartDateLessThanEqualOrderByStartDateDesc(userId, to);
-        }
-        return cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId);
+        return records;
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public CycleRecord createCycleRecord(String userId, CreateCycleRecordRequest req) {
         ensureUniqueStartDate(userId, req.getStartDate(), null);
         CycleRecord record = new CycleRecord();
@@ -96,6 +101,7 @@ public class CycleRecordService {
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public CycleRecord updateCycleRecord(String userId, Long id, UpdateCycleRecordRequest req) {
         CycleRecord record = cycleRecordRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
@@ -106,6 +112,7 @@ public class CycleRecordService {
         return cycleRecordRepository.save(record);
     }
 
+    @CacheEvict(value = "ai_context", key = "#user.id")
     public CycleRecord upsertInitialFromProfile(User user) {
         if (user == null || user.getId() == null || user.getLastPeriodDate() == null || user.getLastPeriodDate().isBlank()) {
             return null;
@@ -130,6 +137,7 @@ public class CycleRecordService {
         }
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public CycleRecord confirmPeriodStart(String userId, LocalDate startDate) {
         if (startDate == null) {
             throw new IllegalArgumentException("Ngày bắt đầu là bắt buộc");
@@ -148,6 +156,7 @@ public class CycleRecordService {
                 });
     }
 
+    @CacheEvict(value = "ai_context", key = "#userId")
     public void deleteCycleRecord(String userId, Long id) {
         CycleRecord record = cycleRecordRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
@@ -394,7 +403,17 @@ public class CycleRecordService {
                                              int estimatedCycleLength,
                                              int estimatedPeriodLength) {
         LocalDate from = sortedRecords.get(Math.max(0, sortedRecords.size() - 6)).getStartDate();
-        List<DailyLog> logs = dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(userId, from, LocalDate.now());
+        List<DailyLog> logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
+        if (from != null) {
+            LocalDate today = LocalDate.now();
+            logs = logs.stream()
+                    .filter(log -> {
+                        LocalDate d = log.getLogDate();
+                        if (d == null) return false;
+                        return !d.isBefore(from) && !d.isAfter(today);
+                    })
+                    .collect(java.util.stream.Collectors.toList());
+        }
         if (logs.isEmpty()) {
             return SymptomAnalytics.empty();
         }
