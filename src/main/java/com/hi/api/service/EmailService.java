@@ -62,23 +62,26 @@ public class EmailService {
      */
     @Async("mailExecutor")
     public void sendDailyCheckInEmail(String to, String name, String message) {
-        String heading = "Chào " + name + " nè,";
+        String heading = "Chào " + name + " thương yêu,";
         String body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
-                "Hôm nay của bạn thế nào rồi? Có điều gì vui hay chút mệt mỏi muốn nhỏ to tâm sự cùng Hi không?</p>" +
-                "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
-                "Chỉ cần một vài giây chạm nhẹ thôi, kể cho Hi nghe bạn đang cảm thấy thế nào hôm nay nhé. Hi luôn ở đây lắng nghe và chuẩn bị sẵn những gợi ý chăm sóc siêu ngọt ngào dành riêng cho bạn đó!</p>";
+                "Hi ghé thăm bạn hôm nay với một lời khuyên sức khỏe nhỏ nha:</p>" +
+                "<div style=\"background-color: #fff6f7; border-left: 4px solid #ff758c; padding: 15px; margin-bottom: 20px; font-style: italic; font-size: 16px; color: #4a4a4a; line-height: 1.6; border-radius: 8px;\">" +
+                "  \"" + message + "\"" +
+                "</div>" +
+                "<p style=\"margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;\">" +
+                "Nếu hôm nay bạn có bất kỳ cảm xúc hay triệu chứng nào khác, đừng ngần ngại ghi nhanh lại trong Hi để nhận được các gợi ý chăm sóc chuẩn xác nhất nhé. Hi luôn ở đây lắng nghe bạn!</p>";
 
         String html = buildHtmlTemplate(
-                "Hi hỏi thăm bạn hôm nay",
+                "Lời khuyên sức khỏe hôm nay từ Hi",
                 heading,
                 body,
                 "Nhỏ to cùng Hi nha",
                 "https://hilover.space/notifications",
                 to,
-                "Thương bạn,"
+                "Thương bạn nhiều,"
         );
 
-        sendRequiredEmail(to, "Hi hỏi thăm bạn hôm nay", html, true);
+        sendRequiredEmail(to, "Lời khuyên sức khỏe hôm nay từ Hi", html, true);
     }
 
     /**
@@ -89,8 +92,11 @@ public class EmailService {
         String heading = "Ting ting! Chào " + name + " nha,";
         String body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
                 "Hôm nay bạn đã hỏi thăm <strong>" + partnerName + "</strong> chưa nè?</p>" +
-                "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
-                "Giữa bộn bề cuộc sống, đôi khi chỉ một lời nhắn ngắn ngủi 'Hôm nay thế nào rồi?' hay một cái ôm ấm áp cũng đủ làm người ấy mỉm cười cả ngày rồi đó. Hãy gửi một lời quan tâm thật dễ thương đến người ấy hôm nay nhé. Cùng Hi giữ lửa yêu thương nha!</p>";
+                "<div style=\"background-color: #fff6f7; border-left: 4px solid #ff758c; padding: 15px; margin-bottom: 20px; font-style: italic; font-size: 16px; color: #4a4a4a; line-height: 1.6; border-radius: 8px;\">" +
+                "  \"" + message + "\"" +
+                "</div>" +
+                "<p style=\"margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;\">" +
+                "Giữa bộn bề cuộc sống, đôi khi chỉ một lời nhắn ngắn ngủi hay một cử chỉ nhỏ cũng đủ làm ấm lòng người ấy rồi. Cùng Hi chăm chút cho tình yêu thêm bền chặt nha!</p>";
 
         String html = buildHtmlTemplate(
                 "Hi nhắc bạn quan tâm Người ấy",
@@ -164,18 +170,10 @@ public class EmailService {
         String heading = "Chào " + name + " ơi,";
         String buttonText = endOfDay ? "Ghi nhận cùng Hi nha" : "Ghi triệu chứng ngay";
         
-        String body;
-        if (endOfDay) {
-            body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
-                    "Một ngày dài sắp khép lại rồi, bạn đã chuẩn bị đi ngủ chưa nè? Trước khi nhắm mắt nghỉ ngơi, hãy dành ra 30 giây cùng Hi nhìn lại ngày hôm nay nhé.</p>" +
-                    "<p style=\"margin: 0; font-size: 15px; line-height: 1.6;\">" +
-                    "Nếu bạn đang trong chu kỳ hoặc có triệu chứng gì khó chịu, nhớ ghi nhanh lại cho Hi biết nha. Chúc bạn có một giấc ngủ thật ngon và những giấc mơ thật đẹp. Ngủ ngon nha bạn của Hi!</p>";
-        } else {
-            body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
-                    "Hôm nay bạn có thấy cơ thể mình có gì khác lạ hay có dấu hiệu 'dâu rụng' không nè?</p>" +
-                    "<p style=\"margin: 0; font-size: 15px; line-height: 1.6;\">" +
-                    "Hi ghé nhắc nhẹ bạn ghi lại vài triệu chứng hoặc lượng kinh hôm nay nha. Chỉ cần vài chạm thôi là Hi đã hiểu rõ cơ thể bạn hơn để đưa ra các dự đoán siêu chuẩn xác rồi đó. Cùng nhau chăm sóc sức khỏe thật tốt nha!</p>";
-        }
+        String body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
+                message + "</p>" +
+                "<p style=\"margin: 0; font-size: 15px; line-height: 1.6;\">" +
+                (endOfDay ? "Chúc bạn có một giấc ngủ thật ngon và những giấc mơ thật đẹp. Ngủ ngon nha bạn của Hi!" : "Cùng nhau chăm sóc sức khỏe thật tốt nha!") + "</p>";
 
         String html = buildHtmlTemplate(
                 "Hi nhắc bạn ghi triệu chứng hôm nay",
@@ -197,9 +195,12 @@ public class EmailService {
     public void sendPartnerSymptomNudgeEmail(String to, String name, String partnerName, String message) {
         String heading = "Chào " + name + " nha,";
         String body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
-                "Tối muộn rồi nè, không biết bạn đồng hành <strong>" + partnerName + "</strong> của bạn hôm nay thế nào rồi ta?</p>" +
-                "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
-                "Hình như cô ấy đang cảm thấy hơi mệt mỏi hoặc có chút triệu chứng nhạy cảm trong người đó. Bạn hãy gửi một tin nhắn chúc ngủ ngon thật ngọt ngào, hoặc hỏi thăm xem cô ấy có cần bạn chườm ấm hay pha giúp cốc sữa nóng không nha. Sự tinh tế của bạn chính là liều thuốc ngọt ngào nhất lúc này đó!</p>";
+                "Tối muộn rồi nè, Hi ghé tai nhỏ to một chút nha:</p>" +
+                "<div style=\"background-color: #fff6f7; border-left: 4px solid #ff758c; padding: 15px; margin-bottom: 20px; font-style: italic; font-size: 16px; color: #4a4a4a; line-height: 1.6; border-radius: 8px;\">" +
+                "  \"" + message + "\"" +
+                "</div>" +
+                "<p style=\"margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;\">" +
+                "Sự quan tâm tinh tế và nhẹ nhàng của bạn lúc này chính là liều thuốc ngọt ngào nhất dành cho người ấy đó!</p>";
 
         String html = buildHtmlTemplate(
                 "Hi gợi ý bạn quan tâm Người ấy tối nay",
