@@ -41,7 +41,7 @@ public class ReminderService {
 
     @Scheduled(cron = "0 0 8 * * ?", zone = "Asia/Ho_Chi_Minh")
     public void generateDailyReminders() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh"));
         log.info("Bắt đầu tạo nhắc nhở hằng ngày cho {}", today);
 
         List<User> users = userRepository.findAll();
@@ -100,7 +100,7 @@ public class ReminderService {
         boolean alreadySent = notificationService.existsByDedupeKey(user.getId(), "DAILY_CHECK_IN", dedupeKey);
         String message = "Hôm nay bạn cảm thấy thế nào? Chạm để ghi nhanh cảm xúc và nhận gợi ý chăm sóc phù hợp.";
 
-        if (Boolean.TRUE.equals(prefs.getPushEnabled())) {
+        if (!alreadySent) {
             notificationService.createIdempotentNotification(
                     user.getId(),
                     "DAILY_CHECK_IN",
@@ -110,14 +110,14 @@ public class ReminderService {
                     dedupeKey,
                     Map.of("date", today.toString())
             );
-        }
 
-        if (!alreadySent && Boolean.TRUE.equals(prefs.getEmailEnabled())) {
-            emailService.sendOptionalEmail(
-                    user.getEmail(),
-                    "Hi hỏi thăm bạn hôm nay",
-                    "Xin chào " + displayName(user, "bạn") + ",\n\n" + message + "\n\nHi Lover"
-            );
+            if (Boolean.TRUE.equals(prefs.getEmailEnabled())) {
+                emailService.sendDailyCheckInEmail(
+                        user.getEmail(),
+                        displayName(user, "bạn"),
+                        message
+                );
+            }
         }
 
         if (Boolean.TRUE.equals(prefs.getPartnerCareTipsEnabled()) && user.getPartnerId() != null) {
@@ -126,7 +126,8 @@ public class ReminderService {
                 String partnerDedupeKey = "PARTNER_DAILY_CHECK_IN:" + partner.getId() + ":" + today;
                 boolean partnerAlreadySent = notificationService.existsByDedupeKey(partner.getId(), "DAILY_CHECK_IN", partnerDedupeKey);
                 String partnerMessage = "Hãy gửi một lời hỏi thăm nhẹ nhàng cho " + displayName(user, "Người ấy") + " hôm nay.";
-                if (Boolean.TRUE.equals(partnerPrefs.getPushEnabled())) {
+                
+                if (!partnerAlreadySent) {
                     notificationService.createIdempotentNotification(
                             partner.getId(),
                             "DAILY_CHECK_IN",
@@ -136,13 +137,15 @@ public class ReminderService {
                             partnerDedupeKey,
                             Map.of("date", today.toString(), "partnerUserId", user.getId())
                     );
-                }
-                if (!partnerAlreadySent && Boolean.TRUE.equals(partnerPrefs.getEmailEnabled())) {
-                    emailService.sendOptionalEmail(
-                            partner.getEmail(),
-                            "Hi nhắc bạn quan tâm Người ấy",
-                            "Xin chào " + displayName(partner, "bạn") + ",\n\n" + partnerMessage + "\n\nHi Lover"
-                    );
+
+                    if (Boolean.TRUE.equals(partnerPrefs.getEmailEnabled())) {
+                        emailService.sendPartnerDailyCheckInEmail(
+                                partner.getEmail(),
+                                displayName(partner, "bạn"),
+                                displayName(user, "Người ấy"),
+                                partnerMessage
+                        );
+                    }
                 }
             });
         }
@@ -165,7 +168,7 @@ public class ReminderService {
         boolean alreadySent = notificationService.existsByDedupeKey(user.getId(), "PERIOD_UPCOMING", dedupeKey);
         String message = "Kỳ kinh dự kiến sẽ bắt đầu trong " + daysBefore + " ngày nữa. Đây chỉ là dự đoán tham khảo, hãy chuẩn bị nhẹ nhàng nhé.";
 
-        if (Boolean.TRUE.equals(prefs.getPushEnabled())) {
+        if (!alreadySent) {
             notificationService.createIdempotentNotification(
                     user.getId(),
                     "PERIOD_UPCOMING",
@@ -175,14 +178,15 @@ public class ReminderService {
                     dedupeKey,
                     Map.of("estimatedPeriodStartDate", nextPeriodDate.toString(), "daysBefore", daysBefore)
             );
-        }
 
-        if (!alreadySent && Boolean.TRUE.equals(prefs.getEmailEnabled())) {
-            emailService.sendOptionalEmail(
-                    user.getEmail(),
-                    "Hi nhắc kỳ kinh sắp tới",
-                    "Xin chào " + displayName(user, "bạn") + ",\n\n" + message + "\n\nHi Lover"
-            );
+            if (Boolean.TRUE.equals(prefs.getEmailEnabled())) {
+                emailService.sendPeriodUpcomingEmail(
+                        user.getEmail(),
+                        displayName(user, "bạn"),
+                        daysBefore,
+                        nextPeriodDate
+                );
+            }
         }
 
         if (Boolean.TRUE.equals(prefs.getPartnerPeriodAlertEnabled()) && user.getPartnerId() != null) {
@@ -191,7 +195,8 @@ public class ReminderService {
                 String partnerDedupeKey = "PARTNER_PERIOD_UPCOMING:" + partner.getId() + ":" + today;
                 boolean partnerAlreadySent = notificationService.existsByDedupeKey(partner.getId(), "PARTNER_PERIOD_UPCOMING", partnerDedupeKey);
                 String partnerMessage = "Kỳ kinh của " + displayName(user, "Người ấy") + " dự kiến sẽ bắt đầu trong " + daysBefore + " ngày nữa. Hãy dành thêm sự quan tâm nhé.";
-                if (Boolean.TRUE.equals(partnerPrefs.getPushEnabled())) {
+                
+                if (!partnerAlreadySent) {
                     notificationService.createIdempotentNotification(
                             partner.getId(),
                             "PARTNER_PERIOD_UPCOMING",
@@ -201,13 +206,15 @@ public class ReminderService {
                             partnerDedupeKey,
                             Map.of("estimatedPeriodStartDate", nextPeriodDate.toString(), "partnerUserId", user.getId(), "daysBefore", daysBefore)
                     );
-                }
-                if (!partnerAlreadySent && Boolean.TRUE.equals(partnerPrefs.getEmailEnabled())) {
-                    emailService.sendOptionalEmail(
-                            partner.getEmail(),
-                            "Hi nhắc bạn quan tâm Người ấy",
-                            "Xin chào " + displayName(partner, "bạn") + ",\n\n" + partnerMessage + "\n\nHi Lover"
-                    );
+
+                    if (Boolean.TRUE.equals(partnerPrefs.getEmailEnabled())) {
+                        emailService.sendPartnerPeriodUpcomingEmail(
+                                partner.getEmail(),
+                                displayName(partner, "bạn"),
+                                displayName(user, "Người ấy"),
+                                daysBefore
+                        );
+                    }
                 }
             });
         }
@@ -259,7 +266,7 @@ public class ReminderService {
                 ? "Ngày hôm nay sắp khép lại rồi. Nếu bạn đang trong kỳ, ghi lại lượng kinh và triệu chứng một chút thôi để Hi hiểu cơ thể bạn hơn nhé."
                 : "Hi ghé nhắc nhẹ: nếu hôm nay bạn có kinh hoặc thấy triệu chứng, hãy ghi lại vài chạm để dự đoán lần sau chính xác hơn.";
 
-        if (Boolean.TRUE.equals(prefs.getPushEnabled())) {
+        if (!alreadySent) {
             notificationService.createIdempotentNotification(
                     user.getId(),
                     type,
@@ -269,13 +276,15 @@ public class ReminderService {
                     dedupeKey,
                     Map.of("date", today.toString())
             );
-        }
-        if (!alreadySent && Boolean.TRUE.equals(prefs.getEmailEnabled())) {
-            emailService.sendOptionalEmail(
-                    user.getEmail(),
-                    "Hi nhắc bạn ghi triệu chứng hôm nay",
-                    "Xin chào " + displayName(user, "bạn") + ",\n\n" + message + "\n\nThương nhẹ,\nHiLover"
-            );
+
+            if (Boolean.TRUE.equals(prefs.getEmailEnabled())) {
+                emailService.sendSymptomReminderEmail(
+                        user.getEmail(),
+                        displayName(user, "bạn"),
+                        message,
+                        endOfDay
+                );
+            }
         }
     }
 
@@ -289,7 +298,7 @@ public class ReminderService {
             String message = displayName(femaleUser, "Người ấy")
                     + " có thể đang cần cập nhật cảm giác hôm nay. Bạn có thể nhắn một câu dịu dàng, hoặc nhắc nhẹ nếu cô ấy muốn ghi lại triệu chứng.";
 
-            if (Boolean.TRUE.equals(partnerPrefs.getPushEnabled())) {
+            if (!alreadySent) {
                 notificationService.createIdempotentNotification(
                         partner.getId(),
                         type,
@@ -299,13 +308,15 @@ public class ReminderService {
                         dedupeKey,
                         Map.of("date", today.toString(), "partnerUserId", femaleUser.getId())
                 );
-            }
-            if (!alreadySent && Boolean.TRUE.equals(partnerPrefs.getEmailEnabled())) {
-                emailService.sendOptionalEmail(
-                        partner.getEmail(),
-                        "Hi gợi ý bạn quan tâm Người ấy tối nay",
-                        "Xin chào " + displayName(partner, "bạn") + ",\n\n" + message + "\n\nNhẹ nhàng thôi nhé,\nHiLover"
-                );
+
+                if (Boolean.TRUE.equals(partnerPrefs.getEmailEnabled())) {
+                    emailService.sendPartnerSymptomNudgeEmail(
+                            partner.getEmail(),
+                            displayName(partner, "bạn"),
+                            displayName(femaleUser, "Người ấy"),
+                            message
+                    );
+                }
             }
         });
     }
