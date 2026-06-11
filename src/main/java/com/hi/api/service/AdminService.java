@@ -491,6 +491,77 @@ public class AdminService {
         auditLogRepository.save(log);
     }
 
+    public long countNotificationAudience(String target) {
+        return mongoTemplate.count(buildCampaignAudienceQuery(target), User.class);
+    }
+
+    public Map<String, Object> sendNotificationCampaign(String actorUserId,
+                                                        String target,
+                                                        String title,
+                                                        String body,
+                                                        String actionUrl,
+                                                        String ipAddress) {
+        Query query = buildCampaignAudienceQuery(target);
+        query.fields().include("_id");
+        List<User> recipients = mongoTemplate.find(query, User.class);
+        String campaignId = UUID.randomUUID().toString();
+
+        for (User recipient : recipients) {
+            notificationService.createIdempotentNotification(
+                    recipient.getId(),
+                    "ADMIN_CAMPAIGN",
+                    title.trim(),
+                    body.trim(),
+                    actionUrl == null || actionUrl.isBlank() ? null : actionUrl.trim(),
+                    campaignId + ":" + recipient.getId(),
+                    Map.of("campaignId", campaignId, "target", normalizeCampaignTarget(target))
+            );
+        }
+
+        AdminAuditLog log = new AdminAuditLog();
+        log.setActorUserId(actorUserId);
+        log.setAction("SEND_NOTIFICATION_CAMPAIGN");
+        log.setEntityType("NOTIFICATION_CAMPAIGN");
+        log.setEntityId(campaignId);
+        log.setAfterData("target=" + normalizeCampaignTarget(target) + ", recipients=" + recipients.size() + ", title=" + title.trim());
+        log.setIpAddress(ipAddress);
+        auditLogRepository.save(log);
+
+        return Map.of(
+                "campaignId", campaignId,
+                "target", normalizeCampaignTarget(target),
+                "recipientCount", recipients.size()
+        );
+    }
+
+    private Query buildCampaignAudienceQuery(String target) {
+        String safeTarget = normalizeCampaignTarget(target);
+        List<Criteria> criteria = new ArrayList<>();
+        criteria.add(Criteria.where("role").ne("admin"));
+        criteria.add(new Criteria().orOperator(
+                Criteria.where("accountStatus").exists(false),
+                Criteria.where("accountStatus").is(null),
+                Criteria.where("accountStatus").is("ACTIVE")
+        ));
+
+        switch (safeTarget) {
+            case "female" -> criteria.add(Criteria.where("gender").is("female"));
+            case "male" -> criteria.add(Criteria.where("gender").is("male"));
+            case "premium" -> criteria.add(Criteria.where("subscription.plan").nin(null, "", "free"));
+            default -> {
+            }
+        }
+        return Query.query(new Criteria().andOperator(criteria.toArray(new Criteria[0])));
+    }
+
+    private String normalizeCampaignTarget(String target) {
+        String safeTarget = target == null ? "" : target.trim().toLowerCase(Locale.ROOT);
+        if (!List.of("all", "female", "male", "premium").contains(safeTarget)) {
+            throw new IllegalArgumentException("Nhóm đối tượng không hợp lệ");
+        }
+        return safeTarget;
+    }
+
     public byte[] exportUsersCsv() {
         Query query = new Query().with(Sort.by(Sort.Direction.DESC, "createdAt"));
         List<User> users = mongoTemplate.find(query, User.class);

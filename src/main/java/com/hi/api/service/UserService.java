@@ -2,6 +2,7 @@ package com.hi.api.service;
 
 import com.hi.api.dto.request.ConnectPartnerRequest;
 import com.hi.api.dto.request.NotificationSettingsRequest;
+import com.hi.api.dto.request.PartnerSharingPreferencesRequest;
 import com.hi.api.dto.request.UpdateProfileRequest;
 import com.hi.api.model.CycleRecord;
 import com.hi.api.model.DailyLog;
@@ -18,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -109,6 +111,8 @@ public class UserService {
         if (req.getSymptomReminderTime() != null) prefs.setSymptomReminderTime(validTime(req.getSymptomReminderTime(), "20:00"));
         if (req.getPartnerEndOfDayNudgeEnabled() != null) prefs.setPartnerEndOfDayNudgeEnabled(req.getPartnerEndOfDayNudgeEnabled());
         if (req.getPartnerNudgeTime() != null) prefs.setPartnerNudgeTime(validTime(req.getPartnerNudgeTime(), "21:00"));
+        if (req.getDailyQuestionsEnabled() != null) prefs.setDailyQuestionsEnabled(req.getDailyQuestionsEnabled());
+        if (req.getContextualCareSuggestionsEnabled() != null) prefs.setContextualCareSuggestionsEnabled(req.getContextualCareSuggestionsEnabled());
         if (req.getAiResponseStyle() != null && !req.getAiResponseStyle().isBlank()) {
             String style = req.getAiResponseStyle().trim().toUpperCase();
             prefs.setAiResponseStyle(style);
@@ -141,8 +145,50 @@ public class UserService {
                     ? user.getAiTone().toUpperCase()
                     : "FRIENDLY");
         }
+        if (prefs.getDailyQuestionsEnabled() == null) prefs.setDailyQuestionsEnabled(true);
+        if (prefs.getContextualCareSuggestionsEnabled() == null) prefs.setContextualCareSuggestionsEnabled(true);
         user.setNotificationPreferences(prefs);
         return prefs;
+    }
+
+    public User.PartnerSharingPreferences getPartnerSharingPreferences(String userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        return ensurePartnerSharingPreferences(user);
+    }
+
+    @CacheEvict(value = "ai_context", key = "#userId")
+    public User.PartnerSharingPreferences updatePartnerSharingPreferences(
+            String userId,
+            PartnerSharingPreferencesRequest req) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        User.PartnerSharingPreferences sharing = ensurePartnerSharingPreferences(user);
+        if (req.getShareDetailedSymptoms() != null) sharing.setShareDetailedSymptoms(req.getShareDetailedSymptoms());
+        if (req.getShareHealthNotes() != null) sharing.setShareHealthNotes(req.getShareHealthNotes());
+        if (req.getShareMood() != null) sharing.setShareMood(req.getShareMood());
+        if (req.getShareCycleData() != null) sharing.setShareCycleData(req.getShareCycleData());
+        sharing.setConsentVersion("partner-sharing-v1");
+        sharing.setConsentedAt(Instant.now());
+        user.setPartnerSharingPreferences(sharing);
+
+        User.NotificationPreferences notifications = ensureNotificationPreferences(user);
+        if (req.getDailyQuestionsEnabled() != null) notifications.setDailyQuestionsEnabled(req.getDailyQuestionsEnabled());
+        if (req.getContextualCareSuggestionsEnabled() != null) notifications.setContextualCareSuggestionsEnabled(req.getContextualCareSuggestionsEnabled());
+        user.setNotificationPreferences(notifications);
+        userRepository.save(user);
+        return sharing;
+    }
+
+    private User.PartnerSharingPreferences ensurePartnerSharingPreferences(User user) {
+        User.PartnerSharingPreferences sharing = user.getPartnerSharingPreferences();
+        if (sharing == null) sharing = new User.PartnerSharingPreferences();
+        if (sharing.getShareDetailedSymptoms() == null) sharing.setShareDetailedSymptoms(false);
+        if (sharing.getShareHealthNotes() == null) sharing.setShareHealthNotes(false);
+        if (sharing.getShareMood() == null) sharing.setShareMood(false);
+        if (sharing.getShareCycleData() == null) sharing.setShareCycleData(false);
+        user.setPartnerSharingPreferences(sharing);
+        return sharing;
     }
 
     private String validTime(String value, String fallback) {

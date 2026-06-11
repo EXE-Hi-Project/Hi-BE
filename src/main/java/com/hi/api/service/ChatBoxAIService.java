@@ -76,6 +76,7 @@ public class ChatBoxAIService {
                 - Chỉ dùng dữ liệu trong ngữ cảnh cho user hiện tại và Người ấy đã kết nối.
                 - Nếu gợi ý sản phẩm affiliate, nói rõ: "Đây là link affiliate, Hi có thể nhận hoa hồng nếu bạn mua qua link này."
                 - Ưu tiên sản phẩm hỗ trợ tại nhà như túi chườm, miếng dán ấm, trà gừng; không gợi ý thuốc nếu không có dữ liệu kiểm duyệt.
+                - Khi user nhắc đau bụng hoặc đau bụng kinh, hãy hỏi thêm mức độ đau, vị trí đau, lượng máu và dấu hiệu bất thường trước khi gợi ý chăm sóc tại nhà.
 
                 Ngữ cảnh:
                 %s
@@ -140,6 +141,8 @@ public class ChatBoxAIService {
             String products = affiliateLines(userContext);
             return """
                     Ôi, đau bụng kỳ kinh đúng là mệt thật. Mình ở đây với bạn nè.
+
+                    Bạn cho mình biết thêm nhé: đau âm ỉ hay quặn từng cơn, mức đau khoảng mấy trên 10, có chóng mặt/sốt/ra máu nhiều bất thường không?
 
                     Bạn có thể thử vài cách dịu nhẹ trước:
                     - Chườm ấm vùng bụng dưới 15-20 phút.
@@ -223,7 +226,10 @@ public class ChatBoxAIService {
         if (value == null) return "";
         String noAccent = Normalizer.normalize(value, Normalizer.Form.NFD)
                 .replaceAll("\\p{M}", "");
-        return noAccent.toLowerCase(Locale.ROOT);
+        return noAccent
+                .replace('đ', 'd')
+                .replace('Đ', 'D')
+                .toLowerCase(Locale.ROOT);
     }
 
     private String extractLine(String text, String marker) {

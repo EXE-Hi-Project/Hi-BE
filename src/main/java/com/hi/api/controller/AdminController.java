@@ -3,10 +3,12 @@ package com.hi.api.controller;
 import com.hi.api.dto.request.UpdateRoleRequest;
 import com.hi.api.dto.request.UpdateAccountStatusRequest;
 import com.hi.api.dto.request.AdminUserNotificationRequest;
+import com.hi.api.dto.request.AdminCampaignRequest;
 import com.hi.api.model.User;
 import com.hi.api.service.AdminService;
 import com.hi.api.service.ReminderService;
 import com.hi.api.service.AnalyticsService;
+import com.hi.api.service.AdminSystemHealthService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -28,11 +30,16 @@ public class AdminController {
     private final AdminService adminService;
     private final ReminderService reminderService;
     private final AnalyticsService analyticsService;
+    private final AdminSystemHealthService adminSystemHealthService;
 
-    public AdminController(AdminService adminService, ReminderService reminderService, AnalyticsService analyticsService) {
+    public AdminController(AdminService adminService,
+                           ReminderService reminderService,
+                           AnalyticsService analyticsService,
+                           AdminSystemHealthService adminSystemHealthService) {
         this.adminService = adminService;
         this.reminderService = reminderService;
         this.analyticsService = analyticsService;
+        this.adminSystemHealthService = adminSystemHealthService;
     }
 
     @GetMapping("/overview")
@@ -47,6 +54,45 @@ public class AdminController {
         Map<String, Object> data = analyticsService.getAnalyticsStats();
         data.put("success", true);
         return ResponseEntity.ok(data);
+    }
+
+    @GetMapping("/system-health")
+    public ResponseEntity<Map<String, Object>> getSystemHealth() {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", adminSystemHealthService.getHealth()
+        ));
+    }
+
+    @GetMapping("/notifications/audience-count")
+    public ResponseEntity<Map<String, Object>> getNotificationAudienceCount(@RequestParam String target) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", Map.of(
+                        "target", target.toLowerCase(),
+                        "count", adminService.countNotificationAudience(target)
+                )
+        ));
+    }
+
+    @PostMapping("/notifications/campaigns")
+    public ResponseEntity<Map<String, Object>> sendNotificationCampaign(
+            @AuthenticationPrincipal User admin,
+            @Valid @RequestBody AdminCampaignRequest req,
+            HttpServletRequest request) {
+        Map<String, Object> result = adminService.sendNotificationCampaign(
+                admin.getId(),
+                req.getTarget(),
+                req.getTitle(),
+                req.getBody(),
+                req.getActionUrl(),
+                request.getRemoteAddr()
+        );
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Đã gửi chiến dịch thông báo",
+                "data", result
+        ));
     }
 
     @GetMapping("/users")

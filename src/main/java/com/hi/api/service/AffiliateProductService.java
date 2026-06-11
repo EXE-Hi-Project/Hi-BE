@@ -2,6 +2,7 @@ package com.hi.api.service;
 
 import com.hi.api.dto.request.UpsertAffiliateProductRequest;
 import com.hi.api.dto.request.UpsertAffiliateRevenueRequest;
+import com.hi.api.model.AffiliateCommissionSource;
 import com.hi.api.model.AffiliatePlatform;
 import com.hi.api.model.AffiliateProduct;
 import com.hi.api.model.AffiliateRevenueEvent;
@@ -9,8 +10,9 @@ import com.hi.api.repository.AffiliateProductRepository;
 import com.hi.api.repository.AffiliateRevenueEventRepository;
 import com.hi.api.repository.ClickTrackingRepository;
 import org.jsoup.Jsoup;
+import org.jsoup.Connection;
 import org.jsoup.nodes.Document;
-import org.jsoup.nodes.Element;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -18,6 +20,7 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -36,6 +39,8 @@ public class AffiliateProductService {
     private final AffiliateTiktokClient affiliateTiktokClient;
     private final AffiliateShopeeClient affiliateShopeeClient;
     private final MongoTemplate mongoTemplate;
+    private final AffiliateUrlPolicy affiliateUrlPolicy;
+    private final AffiliateProductMetadataParser metadataParser;
 
     public AffiliateProductService(AffiliateProductRepository affiliateProductRepository,
                                    AffiliateRevenueEventRepository affiliateRevenueEventRepository,
@@ -43,7 +48,9 @@ public class AffiliateProductService {
                                    SequenceService sequenceService,
                                    AffiliateTiktokClient affiliateTiktokClient,
                                    AffiliateShopeeClient affiliateShopeeClient,
-                                   MongoTemplate mongoTemplate) {
+                                   MongoTemplate mongoTemplate,
+                                   AffiliateUrlPolicy affiliateUrlPolicy,
+                                   AffiliateProductMetadataParser metadataParser) {
         this.affiliateProductRepository = affiliateProductRepository;
         this.affiliateRevenueEventRepository = affiliateRevenueEventRepository;
         this.clickTrackingRepository = clickTrackingRepository;
@@ -51,6 +58,8 @@ public class AffiliateProductService {
         this.affiliateTiktokClient = affiliateTiktokClient;
         this.affiliateShopeeClient = affiliateShopeeClient;
         this.mongoTemplate = mongoTemplate;
+        this.affiliateUrlPolicy = affiliateUrlPolicy;
+        this.metadataParser = metadataParser;
     }
 
     public List<AffiliateProduct> searchProducts(String q, AffiliatePlatform platform, String symptomCategory, Boolean active, int limit) {
@@ -119,7 +128,7 @@ public class AffiliateProductService {
     }
 
     public Map<String, Object> previewLink(String rawUrl) {
-        String normalizedUrl = normalizeUrl(rawUrl);
+        String normalizedUrl = affiliateUrlPolicy.normalizeAndValidate(rawUrl);
         AffiliatePlatform platform = detectPlatform(normalizedUrl);
         if (AffiliatePlatform.OTHER.equals(platform)) {
             throw new IllegalArgumentException("Hi hiện chỉ hỗ trợ đọc trước link TikTok Shop hoặc Shopee trong bản MVP này.");
@@ -130,55 +139,22 @@ public class AffiliateProductService {
         preview.put("sourceName", hostName(normalizedUrl));
 
         try {
-            Document doc = Jsoup.connect(normalizedUrl)
-                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    .header("Accept-Language", "vi-VN,vi;q=0.9,en;q=0.8")
-                    .referrer("https://www.google.com/")
-                    .timeout(12000)
-                    .followRedirects(true)
-                    .get();
-            String finalUrl = doc.location();
-            if (finalUrl != null && !finalUrl.isBlank()) {
-                normalizedUrl = normalizeUrl(finalUrl);
-                platform = detectPlatform(normalizedUrl);
-                preview.put("normalizedUrl", normalizedUrl);
-                preview.put("platform", platform);
-                preview.put("sourceName", hostName(normalizedUrl));
-            }
+            FetchResult fetchResult = fetchDocument(normalizedUrl);
+            normalizedUrl = fetchResult.finalUrl();
+            platform = detectPlatform(normalizedUrl);
+            preview.put("normalizedUrl", normalizedUrl);
+            preview.put("platform", platform);
 
-            String title = firstNonBlank(
-                    meta(doc, "property", "og:title"),
-                    meta(doc, "name", "twitter:title"),
-                    meta(doc, "itemprop", "name"),
-                    doc.title()
+            AffiliateProductMetadataParser.ProductMetadata metadata = metadataParser.parse(
+                    fetchResult.document(),
+                    normalizedUrl
             );
-            String description = firstNonBlank(
-                    meta(doc, "property", "og:description"),
-                    meta(doc, "name", "twitter:description"),
-                    meta(doc, "itemprop", "description"),
-                    meta(doc, "name", "description")
-            );
-            String imageUrl = firstNonBlank(
-                    meta(doc, "property", "og:image"),
-                    meta(doc, "name", "twitter:image"),
-                    meta(doc, "itemprop", "image"),
-                    meta(doc, "property", "og:image:secure_url")
-            );
-            String priceText = firstNonBlank(
-                    meta(doc, "property", "product:price:amount"),
-                    meta(doc, "property", "og:price:amount"),
-                    meta(doc, "itemprop", "price"),
-                    meta(doc, "name", "twitter:data1")
-            );
-            String sourceName = firstNonBlank(meta(doc, "property", "og:site_name"), hostName(normalizedUrl));
-
-            preview.put("title", title);
-            preview.put("description", description);
-            preview.put("imageUrl", imageUrl);
-            preview.put("price", parsePrice(priceText));
-            preview.put("sourceName", sourceName);
-            preview.put("confidence", confidence(title, description, imageUrl));
+            preview.put("title", metadata.title());
+            preview.put("description", metadata.description());
+            preview.put("imageUrl", metadata.imageUrl());
+            preview.put("price", metadata.price());
+            preview.put("sourceName", firstNonBlank(metadata.sourceName(), hostName(normalizedUrl)));
+            preview.put("confidence", confidence(metadata.title(), metadata.description(), metadata.imageUrl()));
         } catch (Exception ex) {
             preview.put("confidence", "LOW");
             preview.put("errorMessage", "Không đọc được đầy đủ metadata từ link này. Bạn vẫn có thể nhập bổ sung thủ công.");
@@ -193,6 +169,7 @@ public class AffiliateProductService {
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy sản phẩm affiliate"));
     }
 
+    @CacheEvict(value = "ai_context", allEntries = true)
     public AffiliateProduct createProduct(UpsertAffiliateProductRequest req) {
         AffiliateProduct product = new AffiliateProduct();
         product.setId(sequenceService.next("affiliate_products"));
@@ -200,12 +177,14 @@ public class AffiliateProductService {
         return affiliateProductRepository.save(product);
     }
 
+    @CacheEvict(value = "ai_context", allEntries = true)
     public AffiliateProduct updateProduct(Long id, UpsertAffiliateProductRequest req) {
         AffiliateProduct product = getById(id);
         apply(product, req);
         return affiliateProductRepository.save(product);
     }
 
+    @CacheEvict(value = "ai_context", allEntries = true)
     public void deleteProduct(Long id) {
         AffiliateProduct product = getById(id);
         product.setIsActive(false);
@@ -213,6 +192,7 @@ public class AffiliateProductService {
         affiliateProductRepository.save(product);
     }
 
+    @CacheEvict(value = "ai_context", allEntries = true)
     public Map<String, Object> sync(AffiliatePlatform platform) {
         if (platform == null) {
             Map<String, Object> result = new LinkedHashMap<>();
@@ -318,6 +298,7 @@ public class AffiliateProductService {
         return result;
     }
 
+    @CacheEvict(value = "ai_context", allEntries = true)
     public AffiliateProduct upsertFromRaw(AffiliatePlatform platform, Map<String, Object> raw) {
         String externalProductId = firstString(raw, "external_product_id", "externalProductId", "product_id", "productId", "item_id", "itemId", "id");
         if (externalProductId == null || externalProductId.isBlank()) return null;
@@ -338,6 +319,7 @@ public class AffiliateProductService {
         product.setPrice(firstBigDecimal(raw, "price", "sale_price", "salePrice", "current_price", "currentPrice"));
         product.setCommissionRate(firstDouble(raw, "commission_rate", "commissionRate", "affiliate_commission_rate", "commission"));
         product.setCommissionAmount(firstBigDecimal(raw, "commission_amount", "commissionAmount"));
+        calculateCommission(product, AffiliateCommissionSource.PLATFORM_SYNC);
         product.setAffiliateUrl(value(firstString(raw, "affiliate_url", "affiliateUrl", "deep_link", "deeplink", "url"), ""));
         product.setImageUrl(value(firstString(raw, "image_url", "imageUrl", "thumbnail", "thumbnail_url", "thumbnailUrl"), ""));
         product.setSymptomCategory(value(firstString(raw, "symptom_category", "symptomCategory", "category", "target_category"), ""));
@@ -361,6 +343,9 @@ public class AffiliateProductService {
         product.setPrice(req.getPrice() != null ? req.getPrice() : BigDecimal.ZERO);
         product.setCommissionRate(req.getCommissionRate() != null ? req.getCommissionRate() : 0.0);
         product.setCommissionAmount(req.getCommissionAmount() != null ? req.getCommissionAmount() : BigDecimal.ZERO);
+        calculateCommission(product, req.getCommissionSource() != null
+                ? req.getCommissionSource()
+                : AffiliateCommissionSource.MANUAL);
         product.setAffiliateUrl(value(req.getAffiliateUrl(), ""));
         product.setImageUrl(value(req.getImageUrl(), ""));
         product.setSymptomCategory(value(req.getSymptomCategory(), ""));
@@ -431,29 +416,6 @@ public class AffiliateProductService {
         return value == null || value.isBlank() ? fallback : value.trim();
     }
 
-    private String normalizeUrl(String rawUrl) {
-        String text = rawUrl == null ? "" : rawUrl.trim();
-        if (text.isBlank()) {
-            throw new IllegalArgumentException("Link affiliate không được để trống");
-        }
-        if (!text.startsWith("http://") && !text.startsWith("https://")) {
-            text = "https://" + text;
-        }
-        try {
-            URI uri = URI.create(text);
-            String scheme = uri.getScheme();
-            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-                throw new IllegalArgumentException("Link affiliate chỉ hỗ trợ http hoặc https");
-            }
-            if (uri.getHost() == null || uri.getHost().isBlank()) {
-                throw new IllegalArgumentException("Link affiliate không hợp lệ");
-            }
-            return uri.toString();
-        } catch (IllegalArgumentException ex) {
-            throw new IllegalArgumentException("Link affiliate không hợp lệ");
-        }
-    }
-
     private AffiliatePlatform detectPlatform(String url) {
         String lower = url.toLowerCase(Locale.ROOT);
         if (lower.contains("shopee.") || lower.contains("s.shopee.")) return AffiliatePlatform.SHOPEE;
@@ -471,30 +433,11 @@ public class AffiliateProductService {
         }
     }
 
-    private String meta(Document doc, String attr, String key) {
-        Element element = doc.selectFirst("meta[" + attr + "='" + key + "']");
-        if (element == null) {
-            element = doc.selectFirst("meta[" + attr + "=\"" + key + "\"]");
-        }
-        return element != null ? element.attr("content").trim() : null;
-    }
-
     private String firstNonBlank(String... values) {
         for (String value : values) {
             if (value != null && !value.isBlank()) return value.trim();
         }
         return null;
-    }
-
-    private BigDecimal parsePrice(String raw) {
-        if (raw == null || raw.isBlank()) return null;
-        try {
-            String cleaned = raw.replaceAll("[^0-9.,]", "").replace(".", "").replace(",", ".");
-            if (cleaned.isBlank()) return null;
-            return new BigDecimal(cleaned);
-        } catch (Exception ignored) {
-            return null;
-        }
     }
 
     private String confidence(String title, String description, String imageUrl) {
@@ -514,5 +457,53 @@ public class AffiliateProductService {
         if (preview.get("imageUrl") == null) missing.add("imageUrl");
         if (preview.get("price") == null) missing.add("price");
         return missing;
+    }
+
+    private FetchResult fetchDocument(String initialUrl) throws Exception {
+        String currentUrl = initialUrl;
+        for (int redirect = 0; redirect <= 5; redirect++) {
+            Connection.Response response = Jsoup.connect(currentUrl)
+                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "vi-VN,vi;q=0.9,en;q=0.8")
+                    .referrer("https://www.google.com/")
+                    .timeout(12000)
+                    .maxBodySize(2_000_000)
+                    .ignoreHttpErrors(true)
+                    .followRedirects(false)
+                    .execute();
+
+            int status = response.statusCode();
+            if (status >= 300 && status < 400) {
+                currentUrl = affiliateUrlPolicy.resolveRedirect(currentUrl, response.header("Location"));
+                continue;
+            }
+            if (status < 200 || status >= 300) {
+                throw new IllegalArgumentException("Nền tảng trả về HTTP " + status);
+            }
+            return new FetchResult(currentUrl, response.parse());
+        }
+        throw new IllegalArgumentException("Link affiliate chuyển hướng quá nhiều lần");
+    }
+
+    private void calculateCommission(AffiliateProduct product, AffiliateCommissionSource source) {
+        BigDecimal price = product.getPrice() != null ? product.getPrice() : BigDecimal.ZERO;
+        BigDecimal amount = product.getCommissionAmount() != null ? product.getCommissionAmount() : BigDecimal.ZERO;
+        double rate = product.getCommissionRate() != null ? product.getCommissionRate() : 0.0;
+
+        if (price.signum() > 0 && rate > 0 && amount.signum() <= 0) {
+            amount = price.multiply(BigDecimal.valueOf(rate))
+                    .divide(BigDecimal.valueOf(100), 0, RoundingMode.HALF_UP);
+            product.setCommissionAmount(amount);
+        } else if (price.signum() > 0 && amount.signum() > 0 && rate <= 0) {
+            rate = amount.multiply(BigDecimal.valueOf(100))
+                    .divide(price, 2, RoundingMode.HALF_UP)
+                    .doubleValue();
+            product.setCommissionRate(rate);
+        }
+        product.setCommissionSource(source);
+    }
+
+    private record FetchResult(String finalUrl, Document document) {
     }
 }
