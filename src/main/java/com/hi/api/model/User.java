@@ -70,6 +70,7 @@ public class User {
     private Integer reminderDaysBefore = 3;
     private Boolean partnerNotifications = true;
     private NotificationPreferences notificationPreferences = new NotificationPreferences();
+    private PartnerSharingPreferences partnerSharingPreferences = new PartnerSharingPreferences();
 
     // Onboarding
     private Boolean onboardingCompleted = false;
@@ -106,6 +107,19 @@ public class User {
         private Boolean partnerEndOfDayNudgeEnabled = true;
         private String partnerNudgeTime = "21:00";
         private String aiResponseStyle = "FRIENDLY";
+        private Boolean dailyQuestionsEnabled = true;
+        private Boolean contextualCareSuggestionsEnabled = true;
+    }
+
+    @Data
+    @NoArgsConstructor
+    public static class PartnerSharingPreferences {
+        private Boolean shareDetailedSymptoms = false;
+        private Boolean shareHealthNotes = false;
+        private Boolean shareMood = false;
+        private Boolean shareCycleData = false;
+        private String consentVersion;
+        private Instant consentedAt;
     }
 
     @CreatedDate

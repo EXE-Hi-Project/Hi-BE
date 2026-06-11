@@ -20,6 +20,8 @@ public class NotificationSettingsRequest {
     private Boolean partnerEndOfDayNudgeEnabled;
     private String partnerNudgeTime;
     private String aiResponseStyle;
+    private Boolean dailyQuestionsEnabled;
+    private Boolean contextualCareSuggestionsEnabled;
 
     @Min(value = 0, message = "Số ngày nhắc trước phải từ 0 đến 10")
     @Max(value = 10, message = "Số ngày nhắc trước phải từ 0 đến 10")

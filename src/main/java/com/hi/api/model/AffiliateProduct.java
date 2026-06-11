@@ -45,6 +45,8 @@ public class AffiliateProduct {
 
     private BigDecimal commissionAmount = BigDecimal.ZERO;
 
+    private AffiliateCommissionSource commissionSource = AffiliateCommissionSource.MANUAL;
+
     private String affiliateUrl = "";
 
     private String imageUrl = "";

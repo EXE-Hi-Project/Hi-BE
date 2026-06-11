@@ -2,6 +2,7 @@ package com.hi.api.controller;
 
 import com.hi.api.dto.request.ConnectPartnerRequest;
 import com.hi.api.dto.request.NotificationSettingsRequest;
+import com.hi.api.dto.request.PartnerSharingPreferencesRequest;
 import com.hi.api.dto.request.UpdateProfileRequest;
 import com.hi.api.model.User;
 import com.hi.api.service.UserService;
@@ -59,6 +60,27 @@ public class UserController {
             @Valid @RequestBody NotificationSettingsRequest req) {
         User.NotificationPreferences settings = userService.updateNotificationSettings(user.getId(), req);
         return ResponseEntity.ok(Map.of("success", true, "settings", settings));
+    }
+
+    @GetMapping("/partner-sharing-preferences")
+    public ResponseEntity<Map<String, Object>> getPartnerSharingPreferences(@AuthenticationPrincipal User user) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "sharing", userService.getPartnerSharingPreferences(user.getId()),
+                "notifications", userService.getNotificationSettings(user.getId())
+        ));
+    }
+
+    @PutMapping("/partner-sharing-preferences")
+    public ResponseEntity<Map<String, Object>> updatePartnerSharingPreferences(
+            @AuthenticationPrincipal User user,
+            @Valid @RequestBody PartnerSharingPreferencesRequest req) {
+        User.PartnerSharingPreferences sharing = userService.updatePartnerSharingPreferences(user.getId(), req);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "sharing", sharing,
+                "notifications", userService.getNotificationSettings(user.getId())
+        ));
     }
 
     @PostMapping("/connect-partner")

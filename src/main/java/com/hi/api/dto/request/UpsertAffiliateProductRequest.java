@@ -1,6 +1,7 @@
 package com.hi.api.dto.request;
 
 import com.hi.api.model.AffiliatePlatform;
+import com.hi.api.model.AffiliateCommissionSource;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -15,6 +16,7 @@ public class UpsertAffiliateProductRequest {
     private BigDecimal price;
     private Double commissionRate;
     private BigDecimal commissionAmount;
+    private AffiliateCommissionSource commissionSource;
     private String affiliateUrl;
     private String imageUrl;
     private String symptomCategory;
