@@ -21,13 +21,22 @@ public class ChatService {
     private final ChatRepository chatRepository;
     private final ChatBoxAIService chatBoxAIService;
     private final ChatContextService chatContextService;
+    private final SubscriptionAccessService subscriptionAccessService;
+    private final AiDailyUsageService aiDailyUsageService;
+    private final AiRequestAdmissionService aiRequestAdmissionService;
 
     public ChatService(ChatRepository chatRepository,
                        ChatBoxAIService chatBoxAIService,
-                       ChatContextService chatContextService) {
+                       ChatContextService chatContextService,
+                       SubscriptionAccessService subscriptionAccessService,
+                       AiDailyUsageService aiDailyUsageService,
+                       AiRequestAdmissionService aiRequestAdmissionService) {
         this.chatRepository = chatRepository;
         this.chatBoxAIService = chatBoxAIService;
         this.chatContextService = chatContextService;
+        this.subscriptionAccessService = subscriptionAccessService;
+        this.aiDailyUsageService = aiDailyUsageService;
+        this.aiRequestAdmissionService = aiRequestAdmissionService;
     }
 
     public List<ChatMessage> getHistory(String userId, LocalDate requestedDate) {
@@ -84,6 +93,8 @@ public class ChatService {
         String cleanContent = content.trim();
         LocalDate sessionDate = defaultSessionDate(requestedDate);
         String sessionTitle = titleFrom(cleanContent);
+        SubscriptionAccessService.SubscriptionAccess access = subscriptionAccessService.getAccess(userId);
+        AiDailyUsageService.Usage usage = aiDailyUsageService.reserve(userId, access.aiDailyLimit());
 
         ChatMessage userMessage = new ChatMessage();
         userMessage.setUserId(userId);
@@ -94,17 +105,49 @@ public class ChatService {
         userMessage.setCreatedAt(Instant.now());
         ChatMessage savedUserMessage = chatRepository.save(userMessage);
 
-        String context = chatContextService.buildContext(userId);
-        String answer = chatBoxAIService.chatOnce(cleanContent, userId, context);
-        ChatMessage assistantMessage = new ChatMessage();
-        assistantMessage.setUserId(userId);
-        assistantMessage.setRole("assistant");
-        assistantMessage.setContent(answer);
-        assistantMessage.setSessionDate(sessionDate);
-        assistantMessage.setSessionTitle(sessionTitle);
-        assistantMessage.setCreatedAt(Instant.now());
-        ChatMessage savedAssistantMessage = chatRepository.save(assistantMessage);
-        return new SendResult(savedUserMessage, savedAssistantMessage);
+        try {
+            String context = chatContextService.buildContext(userId);
+            String recentConversation = recentConversationContext(userId, sessionDate, savedUserMessage.getId());
+            if (!recentConversation.isBlank()) {
+                context += "\n\nHội thoại gần đây trong phiên này:\n" + recentConversation;
+            }
+            String aiContext = context;
+            String answer = aiRequestAdmissionService.execute(
+                    access.premium(),
+                    () -> chatBoxAIService.chatOnce(cleanContent, userId, aiContext)
+            );
+            ChatMessage assistantMessage = new ChatMessage();
+            assistantMessage.setUserId(userId);
+            assistantMessage.setRole("assistant");
+            assistantMessage.setContent(answer);
+            assistantMessage.setSessionDate(sessionDate);
+            assistantMessage.setSessionTitle(sessionTitle);
+            assistantMessage.setCreatedAt(Instant.now());
+            ChatMessage savedAssistantMessage = chatRepository.save(assistantMessage);
+            return new SendResult(savedUserMessage, savedAssistantMessage, usage);
+        } catch (RuntimeException ex) {
+            aiDailyUsageService.release(userId);
+            throw ex;
+        }
+    }
+
+    private String recentConversationContext(String userId, LocalDate sessionDate, String currentMessageId) {
+        List<ChatMessage> history = getHistory(userId, sessionDate);
+        int start = Math.max(0, history.size() - 9);
+        return history.subList(start, history.size()).stream()
+                .filter(message -> currentMessageId == null || !currentMessageId.equals(message.getId()))
+                .map(message -> {
+                    String role = "assistant".equalsIgnoreCase(message.getRole()) ? "Hi AI" : "User";
+                    String content = message.getContent() == null
+                            ? ""
+                            : message.getContent().replaceAll("\\s+", " ").trim();
+                    if (content.length() > 800) {
+                        content = content.substring(0, 800) + "...";
+                    }
+                    return role + ": " + content;
+                })
+                .filter(line -> !line.endsWith(": "))
+                .collect(java.util.stream.Collectors.joining("\n"));
     }
 
     private LocalDate defaultSessionDate(LocalDate requestedDate) {
@@ -144,7 +187,11 @@ public class ChatService {
         }
     }
 
-    public record SendResult(ChatMessage userMessage, ChatMessage assistantMessage) {
+    public record SendResult(
+            ChatMessage userMessage,
+            ChatMessage assistantMessage,
+            AiDailyUsageService.Usage aiUsage
+    ) {
     }
 
     public record ChatSessionSummary(LocalDate sessionDate, String title, int messageCount, Instant lastMessageAt) {

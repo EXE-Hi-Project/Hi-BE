@@ -87,6 +87,7 @@ public class User {
         private String plan = "free";
         private String status;
         private Instant currentPeriodEnd;
+        private Boolean cancelAtPeriodEnd = false;
     }
 
     @Data
@@ -104,11 +105,11 @@ public class User {
         private Integer reminderDaysBefore = 3;
         private Boolean symptomDailyReminderEnabled = true;
         private String symptomReminderTime = "20:00";
-        private Boolean partnerEndOfDayNudgeEnabled = true;
+        private Boolean partnerEndOfDayNudgeEnabled = false;
         private String partnerNudgeTime = "21:00";
         private String aiResponseStyle = "FRIENDLY";
-        private Boolean dailyQuestionsEnabled = true;
-        private Boolean contextualCareSuggestionsEnabled = true;
+        private Boolean dailyQuestionsEnabled = false;
+        private Boolean contextualCareSuggestionsEnabled = false;
     }
 
     @Data

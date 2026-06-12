@@ -26,11 +26,14 @@ import java.util.*;
 public class AuthService {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AuthService.class);
+    private static final int MAX_OTP_ATTEMPTS = 5;
+    private static final int OTP_LOCK_MINUTES = 15;
+    private static final int OTP_RESEND_COOLDOWN_SECONDS = 60;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
     private final PasswordResetTokenRepository tokenRepository;
     private final EmailService emailService;
 
@@ -42,11 +45,13 @@ public class AuthService {
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
             JwtUtil jwtUtil, PasswordResetTokenRepository tokenRepository,
+            RestTemplate restTemplate,
             EmailService emailService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.tokenRepository = tokenRepository;
+        this.restTemplate = restTemplate;
         this.emailService = emailService;
     }
 
@@ -105,12 +110,7 @@ public class AuthService {
         String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
         String otpHash = hashToken(otp);
 
-        PasswordResetToken activationToken = new PasswordResetToken();
-        activationToken.setUserId(user.getId());
-        activationToken.setOtpHash(otpHash);
-        activationToken.setOtpVerified(false);
-        activationToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
-        tokenRepository.save(activationToken);
+        tokenRepository.save(newOtpToken(user.getId(), otpHash));
 
         try {
             emailService.sendRegistrationOtpEmail(user.getEmail(), user.getName(), otp);
@@ -147,37 +147,25 @@ public class AuthService {
     public Map<String, Object> googleAuth(GoogleAuthRequest req) throws Exception {
         String googleId, email, name, picture;
 
-        if (req.getCredential() != null && !req.getCredential().isBlank()) {
-            // ID token flow
-            GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
-                    new NetHttpTransport(), GsonFactory.getDefaultInstance())
-                    .setAudience(Collections.singletonList(googleClientId))
-                    .build();
-
-            GoogleIdToken idToken = verifier.verify(req.getCredential());
-            if (idToken == null)
-                throw new IllegalArgumentException("Google token không hợp lệ");
-
-            GoogleIdToken.Payload payload = idToken.getPayload();
-            googleId = payload.getSubject();
-            email = payload.getEmail();
-            name = (String) payload.get("name");
-            picture = (String) payload.get("picture");
-        } else if (req.getAccessToken() != null && !req.getAccessToken().isBlank()) {
-            // Access token flow — fetch userinfo
-            String url = "https://www.googleapis.com/oauth2/v3/userinfo";
-            @SuppressWarnings("unchecked")
-            Map<String, Object> userInfo = restTemplate.getForObject(
-                    url + "?access_token=" + req.getAccessToken(), Map.class);
-            if (userInfo == null)
-                throw new IllegalArgumentException("Google token không hợp lệ");
-            googleId = (String) userInfo.get("sub");
-            email = (String) userInfo.get("email");
-            name = (String) userInfo.get("name");
-            picture = (String) userInfo.get("picture");
-        } else {
+        if (req.getCredential() == null || req.getCredential().isBlank()) {
             throw new IllegalArgumentException("Thiếu Google credential");
         }
+
+        GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
+                new NetHttpTransport(), GsonFactory.getDefaultInstance())
+                .setAudience(Collections.singletonList(googleClientId))
+                .build();
+
+        GoogleIdToken idToken = verifier.verify(req.getCredential());
+        if (idToken == null) {
+            throw new IllegalArgumentException("Google token không hợp lệ");
+        }
+
+        GoogleIdToken.Payload payload = idToken.getPayload();
+        googleId = payload.getSubject();
+        email = payload.getEmail();
+        name = (String) payload.get("name");
+        picture = (String) payload.get("picture");
 
         if (email == null || email.isBlank()) {
             throw new IllegalArgumentException("Tài khoản Google chưa có email hợp lệ");
@@ -334,12 +322,9 @@ public class AuthService {
         String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
         String otpHash = hashToken(otp);
 
-        PasswordResetToken resetToken = new PasswordResetToken();
-        resetToken.setUserId(user.getId());
-        resetToken.setOtpHash(otpHash);
-        resetToken.setOtpVerified(false);
-        resetToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
-        tokenRepository.save(resetToken);
+        enforceResendCooldown(user.getId());
+        invalidateOpenTokens(user.getId());
+        tokenRepository.save(newOtpToken(user.getId(), otpHash));
 
         log.info("[FORGOT-PASSWORD] Đã lưu OTP token cho user: {}, gửi email...", email);
         try {
@@ -357,14 +342,7 @@ public class AuthService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Mã OTP không đúng hoặc đã hết hạn"));
 
-        String otpHash = hashToken(req.getOtp());
-        PasswordResetToken token = tokenRepository
-                .findByUserIdAndOtpHashAndUsedAtIsNull(user.getId(), otpHash)
-                .orElseThrow(() -> new IllegalArgumentException("Mã OTP không đúng hoặc đã hết hạn"));
-
-        if (token.getExpiresAt().isBefore(Instant.now())) {
-            throw new IllegalArgumentException("Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.");
-        }
+        PasswordResetToken token = verifyOtpToken(user.getId(), req.getOtp());
 
         // Tạo UUID reset token sau khi OTP hợp lệ
         String plainToken = UUID.randomUUID().toString();
@@ -401,14 +379,7 @@ public class AuthService {
             throw new IllegalArgumentException("Tài khoản này đã được kích hoạt từ trước.");
         }
 
-        String otpHash = hashToken(req.getOtp());
-        PasswordResetToken token = tokenRepository
-                .findByUserIdAndOtpHashAndUsedAtIsNull(user.getId(), otpHash)
-                .orElseThrow(() -> new IllegalArgumentException("Mã OTP không đúng hoặc đã hết hạn"));
-
-        if (token.getExpiresAt().isBefore(Instant.now())) {
-            throw new IllegalArgumentException("Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.");
-        }
+        PasswordResetToken token = verifyOtpToken(user.getId(), req.getOtp());
 
         user.setAccountStatus("ACTIVE");
         userRepository.save(user);
@@ -429,24 +400,78 @@ public class AuthService {
             throw new IllegalArgumentException("Tài khoản đã được kích hoạt.");
         }
 
-        // Vô hiệu hóa các OTP cũ
-        List<PasswordResetToken> oldTokens = tokenRepository.findByUserIdAndUsedAtIsNull(user.getId());
-        for (PasswordResetToken t : oldTokens) {
-            t.setUsedAt(Instant.now());
-            tokenRepository.save(t);
-        }
+        enforceResendCooldown(user.getId());
+        invalidateOpenTokens(user.getId());
 
         // Sinh mã OTP mới
         String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
         String otpHash = hashToken(otp);
 
-        PasswordResetToken activationToken = new PasswordResetToken();
-        activationToken.setUserId(user.getId());
-        activationToken.setOtpHash(otpHash);
-        activationToken.setOtpVerified(false);
-        activationToken.setExpiresAt(Instant.now().plus(15, ChronoUnit.MINUTES));
-        tokenRepository.save(activationToken);
+        tokenRepository.save(newOtpToken(user.getId(), otpHash));
 
         emailService.sendRegistrationOtpEmail(user.getEmail(), user.getName(), otp);
     }
+
+    private PasswordResetToken newOtpToken(String userId, String otpHash) {
+        Instant now = Instant.now();
+        PasswordResetToken token = new PasswordResetToken();
+        token.setUserId(userId);
+        token.setOtpHash(otpHash);
+        token.setOtpVerified(false);
+        token.setFailedAttempts(0);
+        token.setCreatedAt(now);
+        token.setExpiresAt(now.plus(15, ChronoUnit.MINUTES));
+        return token;
+    }
+
+    private PasswordResetToken verifyOtpToken(String userId, String plainOtp) {
+        Instant now = Instant.now();
+        PasswordResetToken token = tokenRepository
+                .findTopByUserIdAndUsedAtIsNullAndOtpVerifiedFalseOrderByCreatedAtDesc(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Mã OTP không đúng hoặc đã hết hạn"));
+
+        if (token.getLockedUntil() != null && token.getLockedUntil().isAfter(now)) {
+            throw new IllegalArgumentException("Mã OTP đang tạm khóa do nhập sai quá nhiều lần. Vui lòng thử lại sau.");
+        }
+        if (token.getExpiresAt() == null || token.getExpiresAt().isBefore(now)) {
+            token.setUsedAt(now);
+            tokenRepository.save(token);
+            throw new IllegalArgumentException("Mã OTP đã hết hạn. Vui lòng yêu cầu mã mới.");
+        }
+
+        String otpHash = hashToken(plainOtp);
+        if (!otpHash.equals(token.getOtpHash())) {
+            int attempts = (token.getFailedAttempts() != null ? token.getFailedAttempts() : 0) + 1;
+            token.setFailedAttempts(attempts);
+            token.setLastAttemptAt(now);
+            if (attempts >= MAX_OTP_ATTEMPTS) {
+                token.setLockedUntil(now.plus(OTP_LOCK_MINUTES, ChronoUnit.MINUTES));
+            }
+            tokenRepository.save(token);
+            throw new IllegalArgumentException("Mã OTP không đúng hoặc đã hết hạn");
+        }
+
+        token.setLastAttemptAt(now);
+        return token;
+    }
+
+    private void enforceResendCooldown(String userId) {
+        tokenRepository.findTopByUserIdAndUsedAtIsNullAndOtpVerifiedFalseOrderByCreatedAtDesc(userId)
+                .ifPresent(token -> {
+                    Instant createdAt = token.getCreatedAt();
+                    if (createdAt != null && createdAt.plus(OTP_RESEND_COOLDOWN_SECONDS, ChronoUnit.SECONDS).isAfter(Instant.now())) {
+                        throw new IllegalArgumentException("Vui lòng chờ ít nhất 60 giây trước khi gửi lại OTP.");
+                    }
+                });
+    }
+
+    private void invalidateOpenTokens(String userId) {
+        Instant now = Instant.now();
+        List<PasswordResetToken> oldTokens = tokenRepository.findByUserIdAndUsedAtIsNull(userId);
+        for (PasswordResetToken t : oldTokens) {
+            t.setUsedAt(now);
+            tokenRepository.save(t);
+        }
+    }
+
 }

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -68,6 +69,16 @@ class AdminCampaignServiceTest {
     void rejectsUnknownAudience() {
         AdminService service = createService(mock(MongoTemplate.class), mock(NotificationService.class));
         assertThrows(IllegalArgumentException.class, () -> service.countNotificationAudience("unknown"));
+    }
+
+    @Test
+    void neutralizesSpreadsheetFormulaPrefixes() {
+        AdminService service = createService(mock(MongoTemplate.class), mock(NotificationService.class));
+
+        assertEquals("'=1+1",
+                ReflectionTestUtils.invokeMethod(service, "escapeCsv", "=1+1"));
+        assertEquals("'@SUM(A1:A2)",
+                ReflectionTestUtils.invokeMethod(service, "escapeCsv", "@SUM(A1:A2)"));
     }
 
     private AdminService createService(MongoTemplate mongoTemplate, NotificationService notificationService) {

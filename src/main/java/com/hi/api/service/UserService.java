@@ -16,6 +16,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -34,19 +35,25 @@ public class UserService {
     private final CycleRecordService cycleRecordService;
     private final NotificationService notificationService;
     private final CacheManager cacheManager;
+    private final PartnerAccessService partnerAccessService;
+    private final SubscriptionAccessService subscriptionAccessService;
 
     public UserService(UserRepository userRepository,
                        CycleRecordRepository cycleRecordRepository,
                        DailyLogRepository dailyLogRepository,
                        CycleRecordService cycleRecordService,
                        NotificationService notificationService,
-                       CacheManager cacheManager) {
+                       CacheManager cacheManager,
+                       PartnerAccessService partnerAccessService,
+                       SubscriptionAccessService subscriptionAccessService) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogRepository = dailyLogRepository;
         this.cycleRecordService = cycleRecordService;
         this.notificationService = notificationService;
         this.cacheManager = cacheManager;
+        this.partnerAccessService = partnerAccessService;
+        this.subscriptionAccessService = subscriptionAccessService;
     }
 
     @CacheEvict(value = "ai_context", key = "#userId")
@@ -94,6 +101,7 @@ public class UserService {
     public User.NotificationPreferences updateNotificationSettings(String userId, NotificationSettingsRequest req) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        requirePremiumNotificationAccess(user, req);
         User.NotificationPreferences prefs = ensureNotificationPreferences(user);
 
         if (req.getPeriodUpcomingEnabled() != null) prefs.setPeriodUpcomingEnabled(req.getPeriodUpcomingEnabled());
@@ -163,6 +171,11 @@ public class UserService {
             PartnerSharingPreferencesRequest req) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        if ((Boolean.TRUE.equals(req.getDailyQuestionsEnabled())
+                || Boolean.TRUE.equals(req.getContextualCareSuggestionsEnabled()))
+                && !subscriptionAccessService.hasPremiumForCouple(user)) {
+            throw new AccessDeniedException("Tính năng cặp đôi nâng cao yêu cầu Premium");
+        }
         User.PartnerSharingPreferences sharing = ensurePartnerSharingPreferences(user);
         if (req.getShareDetailedSymptoms() != null) sharing.setShareDetailedSymptoms(req.getShareDetailedSymptoms());
         if (req.getShareHealthNotes() != null) sharing.setShareHealthNotes(req.getShareHealthNotes());
@@ -377,15 +390,20 @@ public class UserService {
             return response;
         }
 
-        User partner = userRepository.findById(user.getPartnerId())
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy dữ liệu Người ấy"));
+        User partner = partnerAccessService.requireCurrentPartner(user);
+        boolean shareCycleData = partnerAccessService.canShareCycleData(partner);
+        boolean shareMood = partnerAccessService.canShareMood(partner);
 
-        List<CycleRecord> cycles = cycleRecordRepository.findByUserIdOrderByStartDateDesc(partner.getId());
-        Page<CycleRecord> historyPageResult = cycleRecordRepository
-                .findByUserIdOrderByStartDateDesc(partner.getId(), PageRequest.of(safePage, safeLimit));
-        DailyLog latestMoodLog = dailyLogRepository
-                .findFirstByUserIdAndMoodScoreIsNotNullOrderByLogDateDesc(partner.getId())
-                .orElse(null);
+        List<CycleRecord> cycles = shareCycleData
+                ? cycleRecordRepository.findByUserIdOrderByStartDateDesc(
+                        partner.getId(), PageRequest.of(0, 12)).getContent()
+                : List.of();
+        Page<CycleRecord> historyPageResult = shareCycleData
+                ? cycleRecordRepository.findByUserIdOrderByStartDateDesc(partner.getId(), PageRequest.of(safePage, safeLimit))
+                : Page.empty(PageRequest.of(safePage, safeLimit));
+        DailyLog latestMoodLog = shareMood
+                ? dailyLogRepository.findFirstByUserIdAndMoodScoreIsNotNullOrderByLogDateDesc(partner.getId()).orElse(null)
+                : null;
 
         Map<String, Object> partnerProfile = new LinkedHashMap<>();
         partnerProfile.put("id", partner.getId());
@@ -395,6 +413,10 @@ public class UserService {
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("partner", partnerProfile);
+        response.put("sharing", Map.of(
+                "shareCycleData", shareCycleData,
+                "shareMood", shareMood
+        ));
         response.put("cycles", cycles);
         response.put("history", historyResponse(
                 historyPageResult.getContent(),
@@ -403,10 +425,27 @@ public class UserService {
                 safeLimit,
                 historyPageResult.hasNext()
         ));
-        response.put("insights", cycleRecordService.getInsights(partner.getId()));
+        if (shareCycleData) {
+            response.put("insights", subscriptionAccessService.filterInsights(
+                    cycleRecordService.getInsights(partner.getId()),
+                    subscriptionAccessService.hasCouplePremium(user, partner)
+            ));
+        } else {
+            response.put("insights", null);
+        }
         response.put("latestMood", moodResponse(latestMoodLog));
         response.put("latestDailyLogDate", latestMoodLog != null ? latestMoodLog.getLogDate() : null);
         return response;
+    }
+
+    private void requirePremiumNotificationAccess(User user, NotificationSettingsRequest req) {
+        boolean enablesPremiumFeature = Boolean.TRUE.equals(req.getDailyQuestionsEnabled())
+                || Boolean.TRUE.equals(req.getContextualCareSuggestionsEnabled())
+                || Boolean.TRUE.equals(req.getPartnerCareTipsEnabled())
+                || Boolean.TRUE.equals(req.getPartnerEndOfDayNudgeEnabled());
+        if (enablesPremiumFeature && !subscriptionAccessService.hasPremiumForCouple(user)) {
+            throw new AccessDeniedException("Tính năng chăm sóc cặp đôi nâng cao yêu cầu Premium");
+        }
     }
 
     private Map<String, Object> moodResponse(DailyLog log) {

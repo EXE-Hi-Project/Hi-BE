@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -68,10 +69,9 @@ public class DailyLogService {
         return logs;
     }
 
-    public DailyLog getLog(String userId, LocalDate logDate) {
-        DailyLog log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate)
-                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy nhật ký ngày này"));
-        attachSymptoms(List.of(log));
+    public Optional<DailyLog> getLog(String userId, LocalDate logDate) {
+        Optional<DailyLog> log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate);
+        log.ifPresent(value -> attachSymptoms(List.of(value)));
         return log;
     }
 

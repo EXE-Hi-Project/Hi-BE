@@ -314,6 +314,7 @@ public class CycleRecordService {
                 .symptomImpactScore(analytics.overallImpactScore)
                 .phaseSymptomImpacts(analytics.phaseImpacts)
                 .topSymptoms(analytics.topSymptoms)
+                .advancedAnalyticsAvailable(true)
                 .build();
     }
 
@@ -332,6 +333,7 @@ public class CycleRecordService {
                 .symptomImpactScore(0.0)
                 .phaseSymptomImpacts(List.of())
                 .topSymptoms(List.of())
+                .advancedAnalyticsAvailable(true)
                 .build();
     }
 

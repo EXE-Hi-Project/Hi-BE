@@ -57,7 +57,8 @@ public class ChatController {
                 "success", true,
                 "userMessage", result.userMessage(),
                 "assistantMessage", result.assistantMessage(),
-                "message", result.assistantMessage()
+                "message", result.assistantMessage(),
+                "aiUsage", result.aiUsage()
         ));
     }
 }

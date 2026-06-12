@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDate;
 import java.util.Optional;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -99,5 +101,29 @@ class DailyLogServiceTest {
         DailyLog saved = service.upsertLog("female-1", today, request);
 
         assertTrue(saved.getHasClots());
+    }
+
+    @Test
+    void missingDailyLogReturnsEmptyResult() {
+        LocalDate today = LocalDate.now();
+        when(dailyLogRepository.findByUserIdAndLogDate("male-1", today)).thenReturn(Optional.empty());
+
+        assertTrue(service.getLog("male-1", today).isEmpty());
+    }
+
+    @Test
+    void existingDailyLogIsReturned() {
+        LocalDate today = LocalDate.now();
+        DailyLog log = new DailyLog();
+        log.setId(1L);
+        log.setUserId("male-1");
+        log.setLogDate(today);
+        when(dailyLogRepository.findByUserIdAndLogDate("male-1", today)).thenReturn(Optional.of(log));
+
+        Optional<DailyLog> result = service.getLog("male-1", today);
+
+        assertTrue(result.isPresent());
+        assertSame(log, result.orElseThrow());
+        assertEquals(today, result.orElseThrow().getLogDate());
     }
 }
