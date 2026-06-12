@@ -8,6 +8,9 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.text.Normalizer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 
 @Service
@@ -23,22 +26,31 @@ public class ChatBoxAIService {
     }
 
     public String chatOnce(String userInput, String userId, String userContext) {
+        String quickAnswer = quickAnswer(userInput, userContext);
+        if (!quickAnswer.isBlank()) {
+            return quickAnswer;
+        }
         if (chatClient == null) {
             return fallbackAnswer(userInput, userContext);
         }
         try {
-            return chatClient.prompt()
+            String answer = chatClient.prompt()
                     .system(systemPrompt(userContext))
                     .user(userInput)
                     .call()
                     .content();
+            return enforceAnswerPolicy(userInput, answer);
         } catch (Exception ex) {
             log.warn("AI chat failed for user {}: {}", userId, ex.getMessage());
-            return fallbackAnswer(userInput, userContext);
+            return temporaryFailureAnswer(userInput, userContext);
         }
     }
 
     public Flux<String> chatStream(String userInput, String userId, String userContext) {
+        String quickAnswer = quickAnswer(userInput, userContext);
+        if (!quickAnswer.isBlank()) {
+            return Flux.just(quickAnswer);
+        }
         if (chatClient == null) {
             return Flux.just(fallbackAnswer(userInput, userContext));
         }
@@ -48,13 +60,42 @@ public class ChatBoxAIService {
                     .user(userInput)
                     .stream()
                     .content()
+                    .collectList()
+                    .map(parts -> enforceAnswerPolicy(userInput, String.join("", parts)))
+                    .flux()
                     .onErrorResume(ex -> {
                         log.warn("AI stream failed for user {}: {}", userId, ex.getMessage());
-                        return Flux.just(fallbackAnswer(userInput, userContext));
+                        return Flux.just(temporaryFailureAnswer(userInput, userContext));
                     });
         } catch (Exception ex) {
             log.warn("AI stream setup failed for user {}: {}", userId, ex.getMessage());
-            return Flux.just(fallbackAnswer(userInput, userContext));
+            return Flux.just(temporaryFailureAnswer(userInput, userContext));
+        }
+    }
+
+    public String generateDailyTip(String userId, String userContext) {
+        if (chatClient == null) {
+            return "";
+        }
+        String prompt = """
+                Tạo một lời hỏi thăm sức khỏe bằng tiếng Việt cho hôm nay.
+                Yêu cầu bắt buộc:
+                - Xưng là "Hi", gọi người dùng là "bạn".
+                - Tối đa 80 từ, chỉ 1-2 đoạn ngắn.
+                - Chỉ đưa một gợi ý chăm sóc nhẹ nhàng, thực tế.
+                - Không chép dữ liệu đầu vào, tên trường, mã trạng thái, điểm số, ngày tháng hoặc danh sách lịch sử.
+                - Không chẩn đoán và không giới thiệu sản phẩm.
+                """;
+        try {
+            String answer = chatClient.prompt()
+                    .system(systemPrompt(userContext))
+                    .user(prompt)
+                    .call()
+                    .content();
+            return sanitizeDailyTip(answer);
+        } catch (Exception ex) {
+            log.warn("Daily AI tip failed for user {}: {}", userId, ex.getMessage());
+            return "";
         }
     }
 
@@ -69,14 +110,20 @@ public class ChatBoxAIService {
 
                 Cách trả lời:
                 - Trả lời bằng tiếng Việt rõ ràng.
-                - Chia thành đoạn ngắn hoặc bullet list, không viết thành một khối dài.
+                - Ưu tiên trả lời ngắn, có cấu trúc và đi thẳng vào nhu cầu chính.
+                - Chia thành nhiều đoạn ngắn hoặc bullet list, không viết thành một khối dài.
+                - Nếu user hỏi trực tiếp "cách", "phương pháp", "nên làm gì" hoặc "xử lý tại nhà", phải cung cấp các bước an toàn, thực tế ngay trong câu trả lời hiện tại. Không được chỉ hỏi thêm rồi chuyển sang sản phẩm.
+                - Nếu triệu chứng còn mơ hồ, vẫn đưa 2-3 bước chăm sóc ban đầu an toàn, sau đó hỏi tối đa 3 câu ngắn để cá nhân hóa lượt tiếp theo.
+                - Với câu trả lời chăm sóc triệu chứng, thứ tự bắt buộc là: giải pháp không dùng sản phẩm -> câu hỏi cá nhân hóa nếu cần -> dấu hiệu cần khám -> sản phẩm hỗ trợ tùy chọn.
                 - Khi nói về chu kỳ, rụng trứng hoặc cửa sổ thụ thai, luôn ghi đây là ước tính.
                 - Không chẩn đoán bệnh, không thay thế bác sĩ, không thay thế biện pháp tránh thai.
                 - Nếu có triệu chứng nghiêm trọng, khuyên người dùng liên hệ bác sĩ hoặc cơ sở y tế.
                 - Chỉ dùng dữ liệu trong ngữ cảnh cho user hiện tại và Người ấy đã kết nối.
-                - Nếu gợi ý sản phẩm affiliate, nói rõ: "Đây là link affiliate, Hi có thể nhận hoa hồng nếu bạn mua qua link này."
-                - Ưu tiên sản phẩm hỗ trợ tại nhà như túi chườm, miếng dán ấm, trà gừng; không gợi ý thuốc nếu không có dữ liệu kiểm duyệt.
-                - Khi user nhắc đau bụng hoặc đau bụng kinh, hãy hỏi thêm mức độ đau, vị trí đau, lượng máu và dấu hiệu bất thường trước khi gợi ý chăm sóc tại nhà.
+                - Sản phẩm chỉ là phần bổ sung tùy chọn, không phải giải pháp chính. Chỉ gợi ý sau khi đã có ít nhất 3 hành động chăm sóc cụ thể và phù hợp.
+                - Không giới thiệu sản phẩm trong lượt sàng lọc đầu tiên nếu user chỉ báo một triệu chứng mơ hồ.
+                - Nếu gợi ý sản phẩm, đặt ở cuối câu trả lời, chỉ dùng tối đa 2 dòng bắt đầu bằng HI_PRODUCT có trong ngữ cảnh. Chép nguyên dòng đó, không viết URL trực tiếp và không nhắc affiliate/hoa hồng với user.
+                - Không thông báo "chưa có sản phẩm đã duyệt" trừ khi user chủ động hỏi về sản phẩm.
+                - Không gợi ý thuốc nếu không có dữ liệu kiểm duyệt.
 
                 Ngữ cảnh:
                 %s
@@ -84,6 +131,16 @@ public class ChatBoxAIService {
     }
 
     private String fallbackAnswer(String userInput, String userContext) {
+        String answer = quickAnswer(userInput, userContext);
+        return answer.isBlank() ? fallbackUnavailable() : answer;
+    }
+
+    private String temporaryFailureAnswer(String userInput, String userContext) {
+        String answer = quickAnswer(userInput, userContext);
+        return answer.isBlank() ? fallbackTemporaryUnavailable() : answer;
+    }
+
+    private String quickAnswer(String userInput, String userContext) {
         String normalized = normalize(userInput);
 
         if (containsAny(normalized, "tinh nang", "hi la gi", "goi hi", "cac goi", "premium", "free", "gia goi")) {
@@ -94,13 +151,13 @@ public class ChatBoxAIService {
                     - Ghi triệu chứng, cảm xúc, lượng kinh và ghi chú hằng ngày.
                     - Kết nối Người ấy để chia sẻ những thông tin bạn cho phép.
                     - Nhận thông báo web, email nhắc gần tới kỳ và hỏi thăm hằng ngày.
-                    - Xem video sức khỏe được duyệt và trò chuyện với Hi AI.
-                    - Gợi ý sản phẩm hỗ trợ tại nhà qua affiliate khi phù hợp.
+                    - Xem video sức khỏe được duyệt, trò chuyện với Hi AI và xem gợi ý sản phẩm hỗ trợ khi phù hợp.
 
                     Các gói Hi:
-                    - Free: theo dõi cơ bản, lịch sử cá nhân, nhắc cơ bản và AI giới hạn.
-                    - Premium tháng: analytics nâng cao, AI Premium và chia sẻ Người ấy nâng cao.
-                    - Premium năm: toàn bộ Premium tháng, báo cáo định kỳ và ưu đãi tiết kiệm.
+                    - Free: đầy đủ theo dõi và lịch sử sức khỏe, dự đoán cơ bản, cảnh báo an toàn, mọi phong cách AI, email và lịch nhắc tùy chỉnh; tối đa 5 câu trả lời AI mỗi ngày.
+                    - Premium tháng: toàn bộ Free, 50 câu trả lời AI mỗi ngày, phân tích chu kỳ và triệu chứng chuyên sâu, cùng trải nghiệm cặp đôi nâng cao.
+                    - Premium năm: cùng tính năng với Premium tháng, khác thời hạn 365 ngày và mức tiết kiệm.
+                    - Chỉ cần một người có Premium để cả hai dùng câu hỏi, lịch sử hội thoại và gợi ý chăm sóc cặp đôi nâng cao.
                     """;
         }
 
@@ -138,21 +195,7 @@ public class ChatBoxAIService {
         }
 
         if (containsAny(normalized, "dau bung", "dau bung kinh", "chuot rut", "toi dau")) {
-            String products = affiliateLines(userContext);
-            return """
-                    Ôi, đau bụng kỳ kinh đúng là mệt thật. Mình ở đây với bạn nè.
-
-                    Bạn cho mình biết thêm nhé: đau âm ỉ hay quặn từng cơn, mức đau khoảng mấy trên 10, có chóng mặt/sốt/ra máu nhiều bất thường không?
-
-                    Bạn có thể thử vài cách dịu nhẹ trước:
-                    - Chườm ấm vùng bụng dưới 15-20 phút.
-                    - Uống nước ấm, nghỉ một chút và tránh vận động quá mạnh.
-                    - Ghi lại mức đau trong Hi để mình theo dõi xu hướng cho bạn.
-
-                    %s
-
-                    Nếu đau dữ dội, kéo dài bất thường, chóng mặt hoặc ra máu quá nhiều, bạn nên liên hệ bác sĩ/cơ sở y tế nhé.
-                    """.formatted(products);
+            return abdominalPainAnswer(normalized, userContext);
         }
 
         if (containsAny(normalized, "trieu chung", "lich su trieu chung", "trieu chung trong ky")) {
@@ -189,30 +232,176 @@ public class ChatBoxAIService {
                     """;
         }
 
-        return fallbackUnavailable();
+        return "";
     }
 
     private String affiliateLines(String context) {
-        String lines = extractBlock(context, "Sản phẩm affiliate đã duyệt");
+        String lines = extractBlock(context, "Sản phẩm gợi ý đã duyệt");
         if (lines.isBlank()) {
-            return "Hi chưa có sản phẩm hỗ trợ đã duyệt để gợi ý lúc này.";
+            lines = extractBlock(context, "Sản phẩm affiliate đã duyệt");
         }
-        return "Một vài sản phẩm hỗ trợ tại nhà có thể phù hợp:\n\n" +
-                lines.lines()
-                        .filter(line -> line.trim().startsWith("-"))
-                        .limit(3)
-                        .map(line -> line + "\n  Đây là link affiliate, Hi có thể nhận hoa hồng nếu bạn mua qua link này.")
-                        .reduce("", (a, b) -> a + b + "\n");
+        if (lines.isBlank()) {
+            return "";
+        }
+        String cards = lines.lines()
+                .map(String::trim)
+                .filter(line -> line.startsWith("HI_PRODUCT|") || line.startsWith("-"))
+                .limit(2)
+                .map(line -> line.startsWith("-") ? legacyProductLine(line) : line)
+                .filter(line -> !line.isBlank())
+                .reduce("", (a, b) -> a + b + "\n");
+        if (cards.isBlank()) {
+            return "";
+        }
+        return cards.strip();
+    }
+
+    private String abdominalPainAnswer(String normalizedInput, String userContext) {
+        boolean asksForMethods = containsAny(normalizedInput,
+                "phuong phap", "cach giam", "giam dau", "tai nha", "nen lam gi", "xu ly", "lam sao");
+
+        if (!asksForMethods) {
+            return """
+                    Mình ở đây với bạn nè. Trước mắt bạn có thể:
+
+                    - Chườm ấm vùng bụng dưới 15-20 phút.
+                    - Uống nước ấm, nghỉ ở tư thế dễ chịu và vận động thật nhẹ nếu thấy ổn.
+                    - Theo dõi mức đau và lượng máu để nhận ra thay đổi bất thường.
+
+                    Để mình gợi ý sát hơn: đau âm ỉ hay quặn từng cơn, mức đau mấy trên 10, và có sốt/chóng mặt/ra máu nhiều bất thường không?
+
+                    Nếu đau dữ dội đột ngột, ngất, sốt, nôn liên tục hoặc ra máu nhiều bất thường, bạn nên liên hệ bác sĩ/cơ sở y tế sớm nhé.
+                    """;
+        }
+
+        String products = affiliateLines(userContext);
+        String productSection = products.isBlank()
+                ? ""
+                : "\n\nSản phẩm hỗ trợ tùy chọn:\n" + products;
+        return """
+                Bạn có thể thử các cách giảm đau bụng kỳ kinh tại nhà theo thứ tự này:
+
+                - Chườm ấm bụng dưới hoặc lưng dưới 15-20 phút, nghỉ vài phút rồi lặp lại nếu cần.
+                - Uống nước ấm, ăn nhẹ và hạn chế rượu bia, cà phê hoặc món quá mặn nếu chúng làm bạn khó chịu hơn.
+                - Đi bộ chậm, kéo giãn nhẹ vùng hông-lưng hoặc nằm nghiêng co chân nếu tư thế đó giúp dễ chịu.
+                - Ngủ đủ và ghi mức đau theo thang 0-10 để theo dõi cách nào có hiệu quả.
+
+                Để cá nhân hóa thêm: bạn đau âm ỉ hay quặn từng cơn, mức đau mấy trên 10, và có sốt/chóng mặt/ra máu nhiều bất thường không?
+
+                Nếu đau dữ dội đột ngột, ngất, sốt, nôn liên tục, đau lệch một bên hoặc ra máu nhiều bất thường, bạn nên liên hệ bác sĩ/cơ sở y tế sớm.%s
+                """.formatted(productSection);
+    }
+
+    private String enforceAnswerPolicy(String userInput, String answer) {
+        if (answer == null || answer.isBlank()) {
+            return fallbackTemporaryUnavailable();
+        }
+
+        List<String> bodyLines = new ArrayList<>();
+        List<String> productLines = new ArrayList<>();
+        for (String line : answer.lines().toList()) {
+            String trimmed = line.trim();
+            if (trimmed.startsWith("HI_PRODUCT|")) {
+                productLines.add(trimmed);
+                continue;
+            }
+            if (isProductHeading(trimmed)) {
+                continue;
+            }
+            bodyLines.add(line);
+        }
+
+        String body = String.join("\n", bodyLines).strip();
+        if (productLines.isEmpty()) {
+            return body;
+        }
+
+        String normalizedInput = normalize(userInput);
+        boolean asksForProduct = containsAny(normalizedInput,
+                "san pham", "mua gi", "goi y mua", "tui chuom", "mieng dan", "tra gung");
+        boolean asksForAdvice = containsAny(normalizedInput,
+                "phuong phap", "cach", "nen lam gi", "xu ly", "giam", "tai nha");
+        boolean hasSubstantialAdvice = body.length() >= 220
+                && containsAny(normalize(body), "ban co the", "thu ", "chuom", "nghi", "theo doi");
+
+        if ((!asksForProduct && !asksForAdvice) || (!asksForProduct && !hasSubstantialAdvice)) {
+            return body;
+        }
+
+        return body
+                + "\n\nSản phẩm hỗ trợ tùy chọn:\n"
+                + String.join("\n", productLines.stream().limit(2).toList());
+    }
+
+    private boolean isProductHeading(String value) {
+        String normalized = normalize(value);
+        return normalized.startsWith("san pham goi y")
+                || normalized.startsWith("san pham ho tro tuy chon")
+                || normalized.startsWith("mot vai san pham ho tro");
+    }
+
+    private String legacyProductLine(String line) {
+        String[] parts = line.replaceFirst("^-\\s*", "").split("\\|");
+        if (parts.length == 0) return "";
+        String name = parts[0].trim();
+        String platform = "";
+        String tags = "";
+        String url = "";
+        for (String part : parts) {
+            String item = part.trim();
+            if (item.startsWith("nền tảng:")) platform = item.replaceFirst("nền tảng:\\s*", "").trim();
+            if (item.startsWith("tags:")) tags = item.replaceFirst("tags:\\s*", "").trim();
+            if (item.startsWith("link:")) url = item.replaceFirst("link:\\s*", "").trim();
+        }
+        return "HI_PRODUCT|name=" + name + "|platform=" + platform + "|tags=" + tags + "|url=" + url;
     }
 
     private String fallbackUnavailable() {
         return """
                 Hi AI đang cần cấu hình nhà cung cấp AI để trả lời sâu hơn.
 
-                Mình vẫn có thể hỗ trợ các câu hỏi cơ bản về Hi, gói Free/Premium, thông báo, video, affiliate và dữ liệu chu kỳ đã lưu.
+                Mình vẫn có thể hỗ trợ các câu hỏi cơ bản về Hi, gói Free/Premium, thông báo, video, sản phẩm hỗ trợ và dữ liệu chu kỳ đã lưu.
 
                 Nếu có triệu chứng nghiêm trọng, hãy liên hệ bác sĩ hoặc cơ sở y tế nhé.
                 """;
+    }
+
+    private String fallbackTemporaryUnavailable() {
+        return """
+                Hi AI đang kết nối chậm hơn bình thường nên chưa thể hoàn tất câu trả lời này.
+
+                Bạn thử gửi lại sau ít phút nhé. Nếu câu hỏi liên quan đến triệu chứng, hãy cho mình biết vị trí khó chịu, mức độ từ 0-10 và các dấu hiệu đi kèm để mình hỗ trợ an toàn hơn ở lần gửi tiếp theo.
+
+                Nếu có triệu chứng nghiêm trọng hoặc diễn tiến nhanh, hãy liên hệ bác sĩ hoặc cơ sở y tế.
+                """;
+    }
+
+    private String sanitizeDailyTip(String answer) {
+        if (answer == null || answer.isBlank()) {
+            return "";
+        }
+        String cleaned = answer
+                .replace("```", "")
+                .replaceAll("(?m)^\\s*[\"']|[\"']\\s*$", "")
+                .replaceAll("[\\t\\r ]+", " ")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
+        String normalized = normalize(cleaned);
+        if (containsAny(normalized,
+                "trieu chung trong ky",
+                "nhat ky gan day",
+                "mood score",
+                "flow intensity",
+                "hi_product|",
+                "du lieu user",
+                "ky tiep theo uoc tinh",
+                "do tin cay du doan")) {
+            return "";
+        }
+        long wordCount = Arrays.stream(cleaned.split("\\s+"))
+                .filter(word -> !word.isBlank())
+                .count();
+        return wordCount <= 80 ? cleaned : "";
     }
 
     private boolean containsAny(String value, String... needles) {

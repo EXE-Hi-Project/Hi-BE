@@ -6,6 +6,8 @@ import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -13,7 +15,6 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
-import java.util.List;
 import java.util.Map;
 
 @Service
@@ -28,6 +29,7 @@ public class ReminderService {
     private final DailyLogRepository dailyLogRepository;
     private final ChatBoxAIService chatBoxAIService;
     private final ChatContextService chatContextService;
+    private final SubscriptionAccessService subscriptionAccessService;
 
     public ReminderService(UserRepository userRepository,
                            CycleRecordService cycleRecordService,
@@ -35,7 +37,8 @@ public class ReminderService {
                            EmailService emailService,
                            DailyLogRepository dailyLogRepository,
                            ChatBoxAIService chatBoxAIService,
-                           ChatContextService chatContextService) {
+                           ChatContextService chatContextService,
+                           SubscriptionAccessService subscriptionAccessService) {
         this.userRepository = userRepository;
         this.cycleRecordService = cycleRecordService;
         this.notificationService = notificationService;
@@ -43,6 +46,7 @@ public class ReminderService {
         this.dailyLogRepository = dailyLogRepository;
         this.chatBoxAIService = chatBoxAIService;
         this.chatContextService = chatContextService;
+        this.subscriptionAccessService = subscriptionAccessService;
     }
 
     @Scheduled(cron = "0 0 8 * * ?", zone = "Asia/Ho_Chi_Minh")
@@ -50,18 +54,21 @@ public class ReminderService {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Ho_Chi_Minh"));
         log.info("Bắt đầu tạo nhắc nhở hằng ngày cho {}", today);
 
-        List<User> users = userRepository.findAll();
         int created = 0;
-        for (User user : users) {
-            if (!isActiveUser(user)) continue;
-            try {
-                created += createDailyCheckIn(user, today);
-                created += createPeriodReminder(user, today);
-                created += createFertilityReminder(user, today);
-            } catch (Exception e) {
-                log.warn("Lỗi tạo nhắc nhở cho user {}: {}", user.getId(), e.getMessage());
+        int pageNumber = 0;
+        Page<User> page;
+        do {
+            page = userRepository.findActiveUsers(PageRequest.of(pageNumber++, 200));
+            for (User user : page.getContent()) {
+                try {
+                    created += createDailyCheckIn(user, today);
+                    created += createPeriodReminder(user, today);
+                    created += createFertilityReminder(user, today);
+                } catch (Exception e) {
+                    log.warn("Lỗi tạo nhắc nhở cho user {}: {}", user.getId(), e.getMessage());
+                }
             }
-        }
+        } while (page.hasNext());
 
         log.info("Hoàn tất tạo nhắc nhở hằng ngày. Tổng xử lý: {}", created);
     }
@@ -76,26 +83,32 @@ public class ReminderService {
         LocalDate today = LocalDate.now(zone);
         LocalTime now = LocalTime.now(zone).truncatedTo(ChronoUnit.MINUTES);
 
-        for (User user : userRepository.findAll()) {
-            if (!isActiveUser(user) || !"female".equalsIgnoreCase(user.getGender())) continue;
-            try {
-                User.NotificationPreferences prefs = prefs(user);
-                CycleRecordInsightResponse insights = cycleRecordService.getInsights(user.getId());
-                if (!shouldAskForSymptomLog(insights, today)) continue;
-                if (dailyLogRepository.findByUserIdAndLogDate(user.getId(), today).isPresent()) continue;
+        int pageNumber = 0;
+        Page<User> page;
+        do {
+            page = userRepository.findActiveFemaleUsers(PageRequest.of(pageNumber++, 200));
+            for (User user : page.getContent()) {
+                try {
+                    User.NotificationPreferences prefs = prefs(user);
+                    CycleRecordInsightResponse insights = cycleRecordService.getInsights(user.getId());
+                    if (!shouldAskForSymptomLog(insights, today)) continue;
+                    if (dailyLogRepository.findByUserIdAndLogDate(user.getId(), today).isPresent()) continue;
 
-                if (Boolean.TRUE.equals(prefs.getSymptomDailyReminderEnabled()) && isDue(now, prefs.getSymptomReminderTime(), "20:00")) {
-                    sendSymptomReminderToFemale(user, today, false);
-                }
+                    if (Boolean.TRUE.equals(prefs.getSymptomDailyReminderEnabled()) && isDue(now, prefs.getSymptomReminderTime(), "20:00")) {
+                        sendSymptomReminderToFemale(user, today, false);
+                    }
 
-                if (Boolean.TRUE.equals(prefs.getPartnerEndOfDayNudgeEnabled()) && isDue(now, prefs.getPartnerNudgeTime(), "21:00")) {
-                    sendSymptomReminderToFemale(user, today, true);
-                    sendPartnerSymptomNudge(user, today);
+                    if (Boolean.TRUE.equals(prefs.getPartnerEndOfDayNudgeEnabled())
+                            && isDue(now, prefs.getPartnerNudgeTime(), "21:00")
+                            && subscriptionAccessService.hasPremiumForCouple(user)) {
+                        sendSymptomReminderToFemale(user, today, true);
+                        sendPartnerSymptomNudge(user, today);
+                    }
+                } catch (Exception e) {
+                    log.warn("Không thể tạo nhắc ghi triệu chứng cho user {}: {}", user.getId(), e.getMessage());
                 }
-            } catch (Exception e) {
-                log.warn("Không thể tạo nhắc ghi triệu chứng cho user {}: {}", user.getId(), e.getMessage());
             }
-        }
+        } while (page.hasNext());
     }
 
     private int createDailyCheckIn(User user, LocalDate today) {
@@ -128,6 +141,7 @@ public class ReminderService {
 
         if (Boolean.TRUE.equals(prefs.getPartnerCareTipsEnabled()) && user.getPartnerId() != null) {
             userRepository.findById(user.getPartnerId()).filter(this::isActiveUser).ifPresent(partner -> {
+                if (!subscriptionAccessService.hasCouplePremium(user, partner)) return;
                 User.NotificationPreferences partnerPrefs = prefs(partner);
                 String partnerDedupeKey = "PARTNER_DAILY_CHECK_IN:" + partner.getId() + ":" + today;
                 boolean partnerAlreadySent = notificationService.existsByDedupeKey(partner.getId(), "DAILY_CHECK_IN", partnerDedupeKey);
@@ -368,13 +382,11 @@ public class ReminderService {
     }
 
     private String getDailyTipMessage(User user) {
-        // 1. Try AI Generation
         try {
             if (chatBoxAIService != null && chatContextService != null) {
                 String context = chatContextService.buildContext(user.getId());
-                String prompt = "Hãy tạo 1 lời khuyên sức khỏe hoặc lời hỏi thăm ngắn gọn, ấm áp (dưới 80 từ) cho ngày hôm nay bằng tiếng Việt. Hãy xưng là 'Hi' và gọi người dùng là 'bạn'. Tập trung vào trạng thái chu kỳ hoặc triệu chứng gần đây của họ nếu có.";
-                String aiResponse = chatBoxAIService.chatOnce(prompt, user.getId(), context);
-                if (aiResponse != null && !aiResponse.isBlank() && !aiResponse.contains("Hi AI đang cần cấu hình")) {
+                String aiResponse = chatBoxAIService.generateDailyTip(user.getId(), context);
+                if (aiResponse != null && !aiResponse.isBlank()) {
                     return aiResponse.trim();
                 }
             }
@@ -382,7 +394,6 @@ public class ReminderService {
             log.warn("Không thể tạo lời khuyên AI cho user {}: {}", user.getId(), e.getMessage());
         }
 
-        // 2. Fallback to Rule-based Tip
         return getFallbackTip(user);
     }
 

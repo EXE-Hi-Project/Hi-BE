@@ -3,6 +3,7 @@ package com.hi.api.security;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -10,7 +11,6 @@ import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
-import java.security.MessageDigest;
 import java.util.Date;
 
 @Component
@@ -24,22 +24,29 @@ public class JwtUtil {
     @Value("${app.jwt.expiration-ms}")
     private long jwtExpirationMs;
 
-    private Key key() {
-        byte[] keyBytes;
-        try {
-            keyBytes = Decoders.BASE64.decode(jwtSecret);
-        } catch (Exception e) {
-            keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
+    @PostConstruct
+    void validateJwtSecret() {
+        if (jwtSecret == null || jwtSecret.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET is required");
         }
-        // Ensure key is at least 256 bits for HS256 (derive via SHA-256 if shorter)
+        if ("HiLover_Secret_2026_ChangeMe".equals(jwtSecret)) {
+            throw new IllegalStateException("JWT_SECRET must not use the documented default value");
+        }
+        byte[] keyBytes = decodeSecret(jwtSecret);
         if (keyBytes.length < 32) {
-            try {
-                keyBytes = MessageDigest.getInstance("SHA-256").digest(keyBytes);
-            } catch (Exception ex) {
-                throw new RuntimeException("Failed to derive JWT signing key", ex);
-            }
+            throw new IllegalStateException("JWT_SECRET must provide at least 256 bits of key material");
         }
-        return Keys.hmacShaKeyFor(keyBytes);
+    }
+
+    private Key key() {
+        return Keys.hmacShaKeyFor(decodeSecret(jwtSecret));
+    }
+
+    private byte[] decodeSecret(String secret) {
+        if (secret.startsWith("base64:")) {
+            return Decoders.BASE64.decode(secret.substring("base64:".length()));
+        }
+        return secret.getBytes(StandardCharsets.UTF_8);
     }
 
     public String generateToken(String userId) {

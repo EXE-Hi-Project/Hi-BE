@@ -22,7 +22,9 @@ public class DailyQuestionSeeder implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        if (repository.countByActiveTrue() >= 90) return;
+        // Seed only a new database. Admin changes, including deactivated questions,
+        // must survive application restarts.
+        if (repository.count() > 0) return;
 
         Map<String, List<String>> questions = new LinkedHashMap<>();
         questions.put("Kết nối", List.of(

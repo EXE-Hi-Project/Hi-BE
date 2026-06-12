@@ -66,7 +66,17 @@ public class SecurityConfig {
             )
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/health").permitAll()
-                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers(HttpMethod.POST,
+                        "/api/auth/register",
+                        "/api/auth/login",
+                        "/api/auth/google",
+                        "/api/auth/facebook",
+                        "/api/auth/forgot-password",
+                        "/api/auth/verify-otp",
+                        "/api/auth/reset-password/**",
+                        "/api/auth/verify-activation",
+                        "/api/auth/resend-activation",
+                        "/api/auth/logout").permitAll()
                 .requestMatchers("/api/analytics/**").permitAll()
                 .requestMatchers("/api/payments/webhook").permitAll()
                 .requestMatchers("/v3/api-docs/**", "/v3/api-docs", "/swagger-ui/**", "/swagger-ui.html", "/swagger-ui").permitAll()

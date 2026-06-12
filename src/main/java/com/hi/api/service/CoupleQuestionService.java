@@ -37,19 +37,22 @@ public class CoupleQuestionService {
     private final PartnerAccessService partnerAccessService;
     private final NotificationService notificationService;
     private final MongoTemplate mongoTemplate;
+    private final SubscriptionAccessService subscriptionAccessService;
 
     public CoupleQuestionService(CoupleQuestionSessionRepository sessionRepository,
                                  DailyQuestionRepository questionRepository,
                                  UserRepository userRepository,
                                  PartnerAccessService partnerAccessService,
                                  NotificationService notificationService,
-                                 MongoTemplate mongoTemplate) {
+                                 MongoTemplate mongoTemplate,
+                                 SubscriptionAccessService subscriptionAccessService) {
         this.sessionRepository = sessionRepository;
         this.questionRepository = questionRepository;
         this.userRepository = userRepository;
         this.partnerAccessService = partnerAccessService;
         this.notificationService = notificationService;
         this.mongoTemplate = mongoTemplate;
+        this.subscriptionAccessService = subscriptionAccessService;
     }
 
     public Map<String, Object> getToday(String userId) {
@@ -63,6 +66,7 @@ public class CoupleQuestionService {
     }
 
     public CoupleQuestionSession getOrCreate(User user, User partner, LocalDate date) {
+        subscriptionAccessService.requireCouplePremium(user, partner);
         String pairKey = partnerAccessService.pairKey(user.getId(), partner.getId());
         return sessionRepository.findByPairKeyAndQuestionDate(pairKey, date).orElseGet(() -> {
             List<DailyQuestion> questions = questionRepository.findByActiveTrueOrderByDisplayOrderAsc();
@@ -138,6 +142,9 @@ public class CoupleQuestionService {
     }
 
     public Map<String, Object> getSession(String userId, String sessionId) {
+        User user = partnerAccessService.requireUser(userId);
+        User partner = partnerAccessService.requireCurrentPartner(user);
+        subscriptionAccessService.requireCouplePremium(user, partner);
         CoupleQuestionSession session = sessionRepository.findByIdAndParticipantIdsContaining(sessionId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy câu hỏi"));
         String otherId = session.getParticipantIds().stream().filter(id -> !id.equals(userId)).findFirst().orElse(null);
@@ -146,6 +153,9 @@ public class CoupleQuestionService {
     }
 
     public Map<String, Object> history(String userId, int page, int limit) {
+        User user = partnerAccessService.requireUser(userId);
+        User partner = partnerAccessService.requireCurrentPartner(user);
+        subscriptionAccessService.requireCouplePremium(user, partner);
         int safeLimit = Math.max(1, Math.min(limit, 31));
         Page<CoupleQuestionSession> result = sessionRepository
                 .findByParticipantIdsContainingOrderByQuestionDateDesc(userId, PageRequest.of(Math.max(0, page), safeLimit));
@@ -167,6 +177,7 @@ public class CoupleQuestionService {
     public Map<String, Object> addMessage(String userId, String sessionId, String content) {
         User user = partnerAccessService.requireUser(userId);
         User partner = partnerAccessService.requireCurrentPartner(user);
+        subscriptionAccessService.requireCouplePremium(user, partner);
         CoupleQuestionSession session = sessionRepository.findByIdAndParticipantIdsContaining(sessionId, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy câu hỏi"));
         if (!session.getPairKey().equals(partnerAccessService.pairKey(userId, partner.getId()))) {

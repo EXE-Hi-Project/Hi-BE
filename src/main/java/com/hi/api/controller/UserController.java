@@ -114,6 +114,7 @@ public class UserController {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
         response.put("partner", partnerData.get("partner"));
+        response.put("sharing", partnerData.get("sharing"));
         response.put("cycles", partnerData.get("cycles"));
         response.put("history", partnerData.get("history"));
         response.put("insights", partnerData.get("insights"));

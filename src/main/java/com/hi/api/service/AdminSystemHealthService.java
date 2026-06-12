@@ -15,8 +15,8 @@ public class AdminSystemHealthService {
 
     private final MongoTemplate mongoTemplate;
 
-    @Value("${spring.ai.openai.chat.enabled:false}")
-    private boolean aiEnabled;
+    @Value("${spring.ai.model.chat:openai}")
+    private String aiProvider;
 
     @Value("${spring.ai.openai.api-key:}")
     private String aiApiKey;
@@ -57,7 +57,7 @@ public class AdminSystemHealthService {
         }
 
         Map<String, Object> aiStatus;
-        if (aiEnabled && configured(aiApiKey) && !"disabled".equalsIgnoreCase(aiApiKey)) {
+        if (!"none".equalsIgnoreCase(aiProvider) && configured(aiApiKey) && !"disabled".equalsIgnoreCase(aiApiKey)) {
             aiStatus = service("AI provider", "HEALTHY", "Đã cấu hình " + value(aiModel, "AI model") + "; không gọi model khi kiểm tra", null);
         } else {
             aiStatus = service("AI provider", "DEGRADED", "Chưa cấu hình provider; Hi AI đang dùng câu trả lời fallback", null);

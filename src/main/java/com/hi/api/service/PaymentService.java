@@ -15,6 +15,7 @@ import vn.payos.model.webhooks.Webhook;
 import vn.payos.model.webhooks.WebhookData;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -29,6 +30,9 @@ public class PaymentService {
 
     @Value("${app.client-url}")
     private String clientUrl;
+
+    @Value("${app.payment.return-url.allowed-origins:${app.client-url}}")
+    private String allowedReturnOrigins;
 
     public PaymentService(UserRepository userRepository, TransactionRepository transactionRepository, PayOS payOS) {
         this.userRepository = userRepository;
@@ -46,26 +50,22 @@ public class PaymentService {
         }
 
         long amount = 49000L;
-        String planName = "premium_monthly";
+        String planName = "PREMIUM_MONTHLY";
         if ("yearly".equalsIgnoreCase(priceId) || priceId.contains("yearly") || priceId.contains("399000") || priceId.contains("premium_yearly")) {
             amount = 399000L;
-            planName = "premium_yearly";
+            planName = "PREMIUM_YEARLY";
         }
 
         // PayOS orderCode must be a Long integer.
         // We combine the current epoch seconds with a random 4-digit code.
         long orderCode = (System.currentTimeMillis() / 1000) * 10000 + (long) (Math.random() * 10000);
 
-        // Resolve client URL dynamically based on Request Origin Header, fallback to configured URL
-        String baseUrl = (originUrl != null && !originUrl.isEmpty()) ? originUrl : clientUrl;
-        if (baseUrl.endsWith("/")) {
-            baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
-        }
+        String baseUrl = resolveReturnBaseUrl(originUrl);
 
         CreatePaymentLinkRequest request = CreatePaymentLinkRequest.builder()
                 .orderCode(orderCode)
                 .amount(amount)
-                .description("HiPremium" + ("premium_yearly".equals(planName) ? "Yearly" : "Monthly"))
+                .description("HiPremium" + ("PREMIUM_YEARLY".equals(planName) ? "Yearly" : "Monthly"))
                 .returnUrl(baseUrl + "/payment/success?orderCode=" + orderCode)
                 .cancelUrl(baseUrl + "/payment/cancel")
                 .build();
@@ -79,6 +79,7 @@ public class PaymentService {
         user.getSubscription().setPayosOrderCode(orderCode);
         user.getSubscription().setPlan(planName);
         user.getSubscription().setStatus("pending");
+        user.getSubscription().setCancelAtPeriodEnd(false);
         userRepository.save(user);
 
         // Create transaction log in history
@@ -89,11 +90,31 @@ public class PaymentService {
         transaction.setAmount(amount);
         transaction.setPlan(planName);
         transaction.setStatus("pending");
-        transaction.setDescription("HiPremium " + ("premium_yearly".equals(planName) ? "Yearly" : "Monthly"));
+        transaction.setDescription("HiPremium " + ("PREMIUM_YEARLY".equals(planName) ? "Yearly" : "Monthly"));
         transactionRepository.save(transaction);
 
         log.info("Created PayOS payment link for user: {}, orderCode: {}, url: {}", user.getEmail(), orderCode, response.getCheckoutUrl());
         return response.getCheckoutUrl();
+    }
+
+    private String resolveReturnBaseUrl(String originUrl) {
+        String fallback = normalizeOrigin(clientUrl);
+        if (originUrl == null || originUrl.isBlank()) {
+            return fallback;
+        }
+        String requested = normalizeOrigin(originUrl);
+        boolean allowed = Arrays.stream(allowedReturnOrigins.split(","))
+                .map(this::normalizeOrigin)
+                .anyMatch(requested::equals);
+        return allowed ? requested : fallback;
+    }
+
+    private String normalizeOrigin(String origin) {
+        String value = origin == null ? "" : origin.trim();
+        while (value.endsWith("/")) {
+            value = value.substring(0, value.length() - 1);
+        }
+        return value;
     }
 
     public void handleWebhook(Webhook webhook) throws Exception {
@@ -112,9 +133,10 @@ public class PaymentService {
                 // Update User Subscription State
                 user.getSubscription().setStatus("active");
                 String plan = user.getSubscription().getPlan();
-                int days = plan != null && plan.contains("yearly") ? 365 : 30;
+                int days = plan != null && plan.toLowerCase().contains("yearly") ? 365 : 30;
                 Instant currentPeriodEnd = Instant.now().plus(java.time.Duration.ofDays(days));
                 user.getSubscription().setCurrentPeriodEnd(currentPeriodEnd);
+                user.getSubscription().setCancelAtPeriodEnd(false);
                 userRepository.save(user);
 
                 // Update Transaction Status
@@ -144,7 +166,10 @@ public class PaymentService {
 
     public void cancelSubscription(User user) {
         if (user.getSubscription() != null) {
-            user.getSubscription().setStatus("canceled");
+            Instant activeUntil = user.getSubscription().getCurrentPeriodEnd();
+            boolean stillActive = activeUntil != null && activeUntil.isAfter(Instant.now());
+            user.getSubscription().setCancelAtPeriodEnd(stillActive);
+            user.getSubscription().setStatus(stillActive ? "active" : "canceled");
             userRepository.save(user);
             
             // Mark corresponding transaction as canceled if it's pending

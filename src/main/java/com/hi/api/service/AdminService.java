@@ -7,12 +7,14 @@ import com.hi.api.model.Transaction;
 import com.hi.api.repository.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -166,41 +168,23 @@ public class AdminService {
         result.put("monthlyFinancials", monthlyFinancials);
         result.put("recentUsers", recentUsers);
 
-        // PayOS Transactions Aggregation
-        List<Transaction> allTransactions = transactionRepository.findAll();
-        long totalRevenueVnd = 0;
-        long completedOrdersCount = 0;
-        long totalOrdersCount = allTransactions.size();
+        // PayOS totals stay in Mongo; only the latest 50 rows are materialized.
+        long totalOrdersCount = transactionRepository.count();
+        long completedOrdersCount = transactionRepository.countByStatusIgnoreCase("completed");
+        long pendingOrdersCount = transactionRepository.countByStatusIgnoreCase("pending");
+        long canceledOrdersCount = Math.max(0, totalOrdersCount - completedOrdersCount - pendingOrdersCount);
+        long totalRevenueVnd = sumLong(
+                Transaction.class,
+                "amount",
+                Criteria.where("status").regex("^completed$", "i")
+        );
 
         Map<String, Long> statusBreakdown = new HashMap<>();
-        statusBreakdown.put("completed", 0L);
-        statusBreakdown.put("pending", 0L);
-        statusBreakdown.put("canceled", 0L);
+        statusBreakdown.put("completed", completedOrdersCount);
+        statusBreakdown.put("pending", pendingOrdersCount);
+        statusBreakdown.put("canceled", canceledOrdersCount);
 
-        for (Transaction tx : allTransactions) {
-            String status = tx.getStatus() != null ? tx.getStatus().toLowerCase() : "pending";
-            if ("completed".equals(status)) {
-                totalRevenueVnd += tx.getAmount() != null ? tx.getAmount() : 0L;
-                completedOrdersCount++;
-                statusBreakdown.put("completed", statusBreakdown.get("completed") + 1);
-            } else if ("pending".equals(status)) {
-                statusBreakdown.put("pending", statusBreakdown.get("pending") + 1);
-            } else {
-                statusBreakdown.put("canceled", statusBreakdown.get("canceled") + 1);
-            }
-        }
-
-        List<Transaction> recentTransactions = allTransactions.stream()
-                .sorted((a, b) -> {
-                    Instant ta = a.getCreatedAt();
-                    Instant tb = b.getCreatedAt();
-                    if (ta == null && tb == null) return 0;
-                    if (ta == null) return 1;
-                    if (tb == null) return -1;
-                    return tb.compareTo(ta); // Descending
-                })
-                .limit(50)
-                .toList();
+        List<Transaction> recentTransactions = transactionRepository.findTop50ByOrderByCreatedAtDesc();
 
         Map<String, Object> payosReport = new LinkedHashMap<>();
         payosReport.put("totalRevenueVnd", totalRevenueVnd);
@@ -211,19 +195,13 @@ public class AdminService {
 
         result.put("payosReport", payosReport);
 
-        List<AffiliateRevenueEvent> affiliateEvents = mongoTemplate.findAll(AffiliateRevenueEvent.class);
-        long affiliateOrders = affiliateEvents.size();
-        java.math.BigDecimal affiliateCommission = java.math.BigDecimal.ZERO;
-        java.math.BigDecimal affiliateSettledCommission = java.math.BigDecimal.ZERO;
-        for (AffiliateRevenueEvent event : affiliateEvents) {
-            java.math.BigDecimal commission = event.getCommissionAmount() != null
-                    ? event.getCommissionAmount()
-                    : java.math.BigDecimal.ZERO;
-            affiliateCommission = affiliateCommission.add(commission);
-            if ("SETTLED".equalsIgnoreCase(event.getStatus()) || "COMPLETED".equalsIgnoreCase(event.getStatus())) {
-                affiliateSettledCommission = affiliateSettledCommission.add(commission);
-            }
-        }
+        long affiliateOrders = mongoTemplate.count(new Query(), AffiliateRevenueEvent.class);
+        BigDecimal affiliateCommission = sumDecimal(AffiliateRevenueEvent.class, "commissionAmount", null);
+        BigDecimal affiliateSettledCommission = sumDecimal(
+                AffiliateRevenueEvent.class,
+                "commissionAmount",
+                Criteria.where("status").regex("^(SETTLED|COMPLETED)$", "i")
+        );
         Map<String, Object> affiliateReport = new LinkedHashMap<>();
         affiliateReport.put("orders", affiliateOrders);
         affiliateReport.put("totalCommissionVnd", affiliateCommission);
@@ -585,11 +563,52 @@ public class AdminService {
 
     private String escapeCsv(String data) {
         if (data == null) return "";
-        String escaped = data.replaceAll("\\R", " "); // Xóa dấu xuống dòng
+        String escaped = data.replaceAll("\\R", " ");
+        if (!escaped.isBlank() && isFormulaPrefix(escaped.charAt(0))) {
+            escaped = "'" + escaped;
+        }
         if (escaped.contains(",") || escaped.contains("\"")) {
             escaped = "\"" + escaped.replace("\"", "\"\"") + "\"";
         }
         return escaped;
+    }
+
+    private boolean isFormulaPrefix(char value) {
+        return value == '=' || value == '+' || value == '-' || value == '@' || value == '\t' || value == '\r';
+    }
+
+    private long sumLong(Class<?> entityType, String field, Criteria criteria) {
+        return aggregateSum(entityType, field, criteria).longValue();
+    }
+
+    private BigDecimal sumDecimal(Class<?> entityType, String field, Criteria criteria) {
+        return aggregateSum(entityType, field, criteria);
+    }
+
+    private BigDecimal aggregateSum(Class<?> entityType, String field, Criteria criteria) {
+        Aggregation aggregation = criteria == null
+                ? Aggregation.newAggregation(Aggregation.group().sum(field).as("total"))
+                : Aggregation.newAggregation(
+                        Aggregation.match(criteria),
+                        Aggregation.group().sum(field).as("total")
+                );
+        org.bson.Document result = mongoTemplate
+                .aggregate(aggregation, entityType, org.bson.Document.class)
+                .getUniqueMappedResult();
+        if (result == null || result.get("total") == null) {
+            return BigDecimal.ZERO;
+        }
+        Object total = result.get("total");
+        if (total instanceof org.bson.types.Decimal128 decimal128) {
+            return decimal128.bigDecimalValue();
+        }
+        if (total instanceof BigDecimal decimal) {
+            return decimal;
+        }
+        if (total instanceof Number number) {
+            return BigDecimal.valueOf(number.doubleValue());
+        }
+        return new BigDecimal(total.toString());
     }
 
     private double round2(double value) {

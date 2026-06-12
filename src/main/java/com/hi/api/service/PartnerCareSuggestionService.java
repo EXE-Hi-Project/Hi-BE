@@ -32,6 +32,7 @@ public class PartnerCareSuggestionService {
     private final CycleRecordService cycleRecordService;
     private final PartnerAccessService partnerAccessService;
     private final NotificationService notificationService;
+    private final SubscriptionAccessService subscriptionAccessService;
 
     public PartnerCareSuggestionService(PartnerCareSuggestionRepository suggestionRepository,
                                         DailyLogRepository dailyLogRepository,
@@ -40,7 +41,8 @@ public class PartnerCareSuggestionService {
                                         CoupleQuestionSessionRepository sessionRepository,
                                         CycleRecordService cycleRecordService,
                                         PartnerAccessService partnerAccessService,
-                                        NotificationService notificationService) {
+                                        NotificationService notificationService,
+                                        SubscriptionAccessService subscriptionAccessService) {
         this.suggestionRepository = suggestionRepository;
         this.dailyLogRepository = dailyLogRepository;
         this.symptomRepository = symptomRepository;
@@ -49,11 +51,13 @@ public class PartnerCareSuggestionService {
         this.cycleRecordService = cycleRecordService;
         this.partnerAccessService = partnerAccessService;
         this.notificationService = notificationService;
+        this.subscriptionAccessService = subscriptionAccessService;
     }
 
     public PartnerCareSuggestion getToday(String userId) {
         User recipient = partnerAccessService.requireUser(userId);
         User partner = partnerAccessService.requireCurrentPartner(recipient);
+        subscriptionAccessService.requireCouplePremium(recipient, partner);
         if (Boolean.FALSE.equals(partnerAccessService.notificationPreferences(recipient).getContextualCareSuggestionsEnabled())) {
             throw new IllegalArgumentException("Bạn đang tắt Gợi ý quan tâm theo ngữ cảnh");
         }
@@ -65,6 +69,7 @@ public class PartnerCareSuggestionService {
     }
 
     public PartnerCareSuggestion generate(User recipient, User partner, LocalDate date) {
+        subscriptionAccessService.requireCouplePremium(recipient, partner);
         PartnerCareSuggestion existing = suggestionRepository
                 .findByRecipientUserIdAndSuggestionDate(recipient.getId(), date).orElse(null);
         if (existing != null) return existing;

@@ -3,6 +3,8 @@ package com.hi.api.controller;
 import com.hi.api.model.User;
 import com.hi.api.model.Transaction;
 import com.hi.api.service.PaymentService;
+import com.hi.api.service.AiDailyUsageService;
+import com.hi.api.service.SubscriptionAccessService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,9 +21,15 @@ import java.util.Map;
 public class PaymentController {
 
     private final PaymentService paymentService;
+    private final SubscriptionAccessService subscriptionAccessService;
+    private final AiDailyUsageService aiDailyUsageService;
 
-    public PaymentController(PaymentService paymentService) {
+    public PaymentController(PaymentService paymentService,
+                             SubscriptionAccessService subscriptionAccessService,
+                             AiDailyUsageService aiDailyUsageService) {
         this.paymentService = paymentService;
+        this.subscriptionAccessService = subscriptionAccessService;
+        this.aiDailyUsageService = aiDailyUsageService;
     }
 
     @PostMapping("/create-checkout-session")
@@ -63,10 +71,26 @@ public class PaymentController {
     @GetMapping("/subscription")
     @SecurityRequirement(name = "Bearer Authentication")
     public ResponseEntity<Map<String, Object>> getSubscription(@AuthenticationPrincipal User user) {
+        SubscriptionAccessService.SubscriptionAccess access = subscriptionAccessService.getAccess(user.getId());
+        AiDailyUsageService.Usage usage = aiDailyUsageService.current(user.getId(), access.aiDailyLimit());
+        boolean couplePremium = subscriptionAccessService.hasPremiumForCouple(user);
+        User.SubscriptionInfo subscription = user.getSubscription() != null
+                ? user.getSubscription()
+                : new User.SubscriptionInfo();
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("plan", access.plan());
+        data.put("tier", access.tier());
+        data.put("status", access.premium() ? "active" : subscription.getStatus());
+        data.put("activeUntil", access.activeUntil());
+        data.put("currentPeriodEnd", access.activeUntil());
+        data.put("cancelAtPeriodEnd", access.cancelAtPeriodEnd());
+        data.put("couplePremium", couplePremium);
+        data.put("entitlements", subscriptionAccessService.getEffectiveEntitlements(user));
+        data.put("aiUsage", usage);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
         response.put("message", "Lấy thông tin subscription thành công");
-        response.put("data", user.getSubscription());
+        response.put("data", data);
         return ResponseEntity.ok(response);
     }
 

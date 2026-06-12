@@ -8,4 +8,6 @@ import java.util.Optional;
 public interface TransactionRepository extends MongoRepository<Transaction, String> {
     Optional<Transaction> findByOrderCode(Long orderCode);
     List<Transaction> findByUserIdOrderByCreatedAtDesc(String userId);
+    List<Transaction> findTop50ByOrderByCreatedAtDesc();
+    long countByStatusIgnoreCase(String status);
 }

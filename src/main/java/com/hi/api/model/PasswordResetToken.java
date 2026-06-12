@@ -34,6 +34,9 @@ public class PasswordResetToken {
     private Instant usedAt;
 
     private String requestedIp;
+    private Integer failedAttempts = 0;
+    private Instant lockedUntil;
+    private Instant lastAttemptAt;
 
     @CreatedDate
     private Instant createdAt;

@@ -4,6 +4,7 @@ import com.hi.api.model.User;
 import com.hi.api.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -56,6 +57,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String headerAuth = request.getHeader("Authorization");
         if (StringUtils.hasText(headerAuth) && headerAuth.startsWith("Bearer ")) {
             return headerAuth.substring(7);
+        }
+        if (request.getCookies() != null) {
+            for (Cookie cookie : request.getCookies()) {
+                if ("hi_access_token".equals(cookie.getName()) && StringUtils.hasText(cookie.getValue())) {
+                    return cookie.getValue();
+                }
+            }
         }
         return null;
     }

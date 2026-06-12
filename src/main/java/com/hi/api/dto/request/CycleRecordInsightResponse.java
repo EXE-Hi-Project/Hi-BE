@@ -8,7 +8,7 @@ import java.time.LocalDate;
 import java.util.List;
 
 @Value
-@Builder
+@Builder(toBuilder = true)
 public class CycleRecordInsightResponse {
     long cycleCount;
     Double averageCycleLength;
@@ -69,6 +69,7 @@ public class CycleRecordInsightResponse {
     Double symptomImpactScore;
     List<PhaseSymptomImpact> phaseSymptomImpacts;
     List<SymptomImpactItem> topSymptoms;
+    boolean advancedAnalyticsAvailable;
 
     @Value
     @Builder

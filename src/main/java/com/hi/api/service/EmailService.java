@@ -91,11 +91,12 @@ public class EmailService {
      */
     @Async("mailExecutor")
     public void sendDailyCheckInEmail(String to, String name, String message) {
-        String heading = "Chào " + name + " thương yêu,";
+        String heading = "Chào " + escapeHtml(name) + " thương yêu,";
+        String safeMessage = formatPlainText(message);
         String body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
                 "Hi ghé thăm bạn hôm nay với một lời khuyên sức khỏe nhỏ nha:</p>" +
                 "<div style=\"background-color: #fff6f7; border-left: 4px solid #ff758c; padding: 15px; margin-bottom: 20px; font-style: italic; font-size: 16px; color: #4a4a4a; line-height: 1.6; border-radius: 8px;\">" +
-                "  \"" + message + "\"" +
+                safeMessage +
                 "</div>" +
                 "<p style=\"margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;\">" +
                 "Nếu hôm nay bạn có bất kỳ cảm xúc hay triệu chứng nào khác, đừng ngần ngại ghi nhanh lại trong Hi để nhận được các gợi ý chăm sóc chuẩn xác nhất nhé. Hi luôn ở đây lắng nghe bạn!</p>";
@@ -111,6 +112,20 @@ public class EmailService {
         );
 
         sendRequiredEmail(to, "Lời khuyên sức khỏe hôm nay từ Hi", html, true);
+    }
+
+    private String formatPlainText(String value) {
+        return escapeHtml(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>");
+    }
+
+    private String escapeHtml(String value) {
+        if (value == null) return "";
+        return value
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 
     /**

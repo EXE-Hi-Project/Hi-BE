@@ -57,4 +57,20 @@ public class PartnerAccessService {
                 ? user.getPartnerSharingPreferences()
                 : new User.PartnerSharingPreferences();
     }
+
+    public boolean canShareCycleData(User dataOwner) {
+        return Boolean.TRUE.equals(sharingPreferences(dataOwner).getShareCycleData());
+    }
+
+    public boolean canShareMood(User dataOwner) {
+        return Boolean.TRUE.equals(sharingPreferences(dataOwner).getShareMood());
+    }
+
+    public boolean canShareDetailedSymptoms(User dataOwner) {
+        return Boolean.TRUE.equals(sharingPreferences(dataOwner).getShareDetailedSymptoms());
+    }
+
+    public boolean canShareHealthNotes(User dataOwner) {
+        return Boolean.TRUE.equals(sharingPreferences(dataOwner).getShareHealthNotes());
+    }
 }

@@ -14,9 +14,16 @@ import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
 import com.hi.api.repository.UserRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.PageRequest;
 
+import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -35,6 +42,7 @@ public class ChatContextService {
     private final SymptomDictionaryRepository symptomDictionaryRepository;
     private final CycleRecordService cycleRecordService;
     private final AffiliateProductRepository affiliateProductRepository;
+    private final PartnerAccessService partnerAccessService;
 
     public ChatContextService(UserRepository userRepository,
                               CycleRecordRepository cycleRecordRepository,
@@ -42,7 +50,8 @@ public class ChatContextService {
                               DailyLogSymptomRepository dailyLogSymptomRepository,
                               SymptomDictionaryRepository symptomDictionaryRepository,
                               CycleRecordService cycleRecordService,
-                              AffiliateProductRepository affiliateProductRepository) {
+                              AffiliateProductRepository affiliateProductRepository,
+                              PartnerAccessService partnerAccessService) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogRepository = dailyLogRepository;
@@ -50,6 +59,7 @@ public class ChatContextService {
         this.symptomDictionaryRepository = symptomDictionaryRepository;
         this.cycleRecordService = cycleRecordService;
         this.affiliateProductRepository = affiliateProductRepository;
+        this.partnerAccessService = partnerAccessService;
     }
 
     @Cacheable(value = "ai_context", key = "#userId")
@@ -75,20 +85,25 @@ public class ChatContextService {
         context.append("- Nhắc kỳ kinh: ").append(Boolean.TRUE.equals(user.getPeriodReminder()) ? "bật" : "tắt").append("\n");
         context.append("- Email nhắc nhở: ").append(user.getNotificationPreferences() != null && Boolean.TRUE.equals(user.getNotificationPreferences().getEmailEnabled()) ? "bật" : "tắt").append("\n");
 
-        appendCycleContext(context, "Dữ liệu chu kỳ của user", user.getId());
+        appendCycleContext(context, "Dữ liệu chu kỳ của user", user.getId(), true);
         appendRecentLogs(context, user.getId(), "Nhật ký gần đây của user");
 
         if (user.getPartnerId() != null && !user.getPartnerId().isBlank()) {
-            userRepository.findById(user.getPartnerId()).ifPresent(partner -> {
+            try {
+                User partner = partnerAccessService.requireCurrentPartner(user);
                 context.append("\nDữ liệu Người ấy đã kết nối:\n");
                 context.append("- Tên: ").append(value(partner.getName(), "Người ấy")).append("\n");
                 context.append("- Giới tính: ").append(value(partner.getGender(), "chưa rõ")).append("\n");
-                if ("female".equalsIgnoreCase(partner.getGender())) {
-                    appendCycleContext(context, "Chu kỳ của Người ấy", partner.getId());
+                if (partnerAccessService.canShareCycleData(partner) && "female".equalsIgnoreCase(partner.getGender())) {
+                    appendCycleContext(context, "Chu kỳ của Người ấy", partner.getId(), false);
                 }
-                dailyLogRepository.findFirstByUserIdAndMoodScoreIsNotNullOrderByLogDateDesc(partner.getId())
-                        .ifPresent(log -> appendDailyLog(context, "Cảm xúc Người ấy chia sẻ gần nhất", log, symptomMap()));
-            });
+                if (partnerAccessService.canShareMood(partner)) {
+                    dailyLogRepository.findFirstByUserIdAndMoodScoreIsNotNullOrderByLogDateDesc(partner.getId())
+                            .ifPresent(log -> appendMoodSummary(context, "Cảm xúc Người ấy chia sẻ gần nhất", log));
+                }
+            } catch (RuntimeException ex) {
+                context.append("\nDữ liệu Người ấy: liên kết không hợp lệ hoặc chưa được chia sẻ.\n");
+            }
         }
 
         appendAffiliateContext(context);
@@ -99,22 +114,23 @@ public class ChatContextService {
         return """
                 Thông tin sản phẩm Hi:
                 - Hi là ứng dụng theo dõi sức khỏe sinh sản cho người dùng Việt Nam, dành cho cả nữ và nam.
-                - Tính năng chính: onboarding, theo dõi chu kỳ, lịch sử chu kỳ, triệu chứng, cảm xúc, Người ấy, thông báo web, email nhắc nhở, video sức khỏe được duyệt, affiliate sản phẩm hỗ trợ tại nhà và Hi AI.
-                - Gói Free: theo dõi chu kỳ cơ bản, lịch sử cá nhân, nhắc cơ bản và AI giới hạn.
-                - Premium tháng: analytics nâng cao, AI Premium và chia sẻ Người ấy nâng cao.
-                - Premium năm: toàn bộ Premium tháng, báo cáo định kỳ và ưu đãi tiết kiệm.
+                - Tính năng chính: onboarding, theo dõi chu kỳ, lịch sử chu kỳ, triệu chứng, cảm xúc, Người ấy, thông báo web, email nhắc nhở, video sức khỏe được duyệt, sản phẩm hỗ trợ tại nhà và Hi AI.
+                - Gói Free: đầy đủ theo dõi và lịch sử sức khỏe, dự đoán cơ bản, cảnh báo an toàn, mọi phong cách AI, email và lịch nhắc tùy chỉnh; tối đa 5 câu trả lời AI mỗi ngày.
+                - Premium tháng: toàn bộ Free, 50 câu trả lời AI mỗi ngày, phân tích chu kỳ và triệu chứng chuyên sâu, cùng trải nghiệm cặp đôi nâng cao.
+                - Premium năm: cùng tính năng với Premium tháng, khác thời hạn 365 ngày và mức tiết kiệm.
+                - Chỉ cần một người có Premium để cả hai dùng tính năng cặp đôi nâng cao.
                 - Video trong Hi là video YouTube công khai từ nguồn được duyệt, không tải xuống hoặc rehost.
-                - Affiliate TikTok/Shopee: Hi có thể gợi ý sản phẩm hỗ trợ như túi chườm, miếng dán ấm, trà gừng. Khi có link affiliate, phải nói rõ Hi có thể nhận hoa hồng.
+                - Sản phẩm hỗ trợ: Hi có thể gợi ý túi chườm, miếng dán ấm, trà gừng hoặc món chăm sóc phù hợp khi có dữ liệu sản phẩm đã duyệt.
                 - Trang trợ giúp: /help. Điều khoản: /terms. Chính sách bảo mật: /privacy.
                 - Email liên hệ: hilover.space@gmail.com.
                 - Dự đoán chu kỳ, rụng trứng và cửa sổ thụ thai chỉ mang tính tham khảo, không thay thế biện pháp tránh thai hoặc tư vấn y khoa.
                 """;
     }
 
-    private void appendCycleContext(StringBuilder context, String title, String userId) {
-        List<CycleRecord> cycles = cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId).stream()
-                .limit(6)
-                .toList();
+    private void appendCycleContext(StringBuilder context, String title, String userId, boolean includePeriodSymptoms) {
+        List<CycleRecord> cycles = cycleRecordRepository
+                .findByUserIdOrderByStartDateDesc(userId, PageRequest.of(0, 6))
+                .getContent();
         CycleRecordInsightResponse insights = cycleRecordService.getInsights(userId);
 
         context.append("\n").append(title).append(":\n");
@@ -124,7 +140,9 @@ public class ChatContextService {
             CycleRecord latest = cycles.get(0);
             context.append("- Kỳ gần nhất: ").append(range(latest)).append("\n");
             context.append("- Các kỳ gần đây: ").append(cycles.stream().map(this::range).toList()).append("\n");
-            appendPeriodSymptoms(context, latest, userId);
+            if (includePeriodSymptoms) {
+                appendPeriodSymptoms(context, latest, userId);
+            }
         }
         context.append("- Trạng thái kỳ: ").append(value(insights.getPeriodStatus(), "UNKNOWN")).append("\n");
         context.append("- Đánh giá chu kỳ: ").append(value(insights.getRegularityLabel(), "chưa đủ dữ liệu")).append("\n");
@@ -148,7 +166,7 @@ public class ChatContextService {
         LocalDate start = latest.getStartDate();
         int periodLength = latest.getPeriodLength() != null ? latest.getPeriodLength() : 5;
         LocalDate end = latest.getEndDate() != null ? latest.getEndDate() : latest.getStartDate().plusDays(Math.max(1, periodLength) - 1L);
-        List<DailyLog> logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
+        List<DailyLog> logs = distinctLogsByDate(dailyLogRepository.findByUserIdOrderByLogDateDesc(userId));
         if (start != null || end != null) {
             final LocalDate finalStart = start;
             final LocalDate finalEnd = end;
@@ -176,9 +194,10 @@ public class ChatContextService {
     }
 
     private void appendRecentLogs(StringBuilder context, String userId, String title) {
-        List<DailyLog> logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId).stream()
-                .limit(5)
-                .toList();
+        List<DailyLog> logs = dailyLogRepository
+                .findByUserIdOrderByLogDateDesc(userId, PageRequest.of(0, 20))
+                .getContent();
+        logs = distinctLogsByDate(logs).stream().limit(5).toList();
         if (logs.isEmpty()) {
             context.append("\n").append(title).append(": chưa có nhật ký.\n");
             return;
@@ -186,6 +205,12 @@ public class ChatContextService {
         Map<Long, SymptomDictionary> dictionary = symptomMap();
         context.append("\n").append(title).append(":\n");
         logs.forEach(log -> appendDailyLog(context, "- Nhật ký " + date(log.getLogDate()), log, dictionary));
+    }
+
+    private void appendMoodSummary(StringBuilder context, String title, DailyLog log) {
+        context.append(title).append(":\n");
+        context.append("  - Mood score: ").append(log.getMoodScore() != null ? log.getMoodScore() : "--").append("\n");
+        context.append("  - Ngày ghi nhận: ").append(date(log.getLogDate())).append("\n");
     }
 
     private void appendDailyLog(StringBuilder context, String title, DailyLog log, Map<Long, SymptomDictionary> dictionary) {
@@ -213,27 +238,57 @@ public class ChatContextService {
     private void appendAffiliateContext(StringBuilder context) {
         List<AffiliateProduct> products = affiliateProductRepository.findByIsActiveTrueOrderByCommissionRateDescPriceAsc()
                 .stream()
-                .limit(8)
+                .limit(5)
                 .toList();
         if (products.isEmpty()) {
-            context.append("\nSản phẩm affiliate: chưa có sản phẩm đã duyệt.\n");
+            context.append("\nSản phẩm gợi ý: chưa có sản phẩm đã duyệt.\n");
             return;
         }
-        context.append("\nSản phẩm affiliate đã duyệt để gợi ý nhẹ nhàng khi phù hợp:\n");
+        context.append("\nSản phẩm gợi ý đã duyệt để dùng khi thật sự phù hợp. Nếu dùng, chép nguyên dòng HI_PRODUCT tương ứng, không tự viết URL:\n");
         for (AffiliateProduct product : products) {
-            context.append("- ")
-                    .append(value(product.getName(), "Sản phẩm"))
-                    .append(" | nền tảng: ").append(product.getPlatform())
-                    .append(" | nhóm: ").append(value(product.getSymptomCategory(), value(product.getCategory(), "chăm sóc tại nhà")))
-                    .append(" | tags: ").append(join(product.getSymptomTags()))
-                    .append(" | link: ").append(value(product.getAffiliateUrl(), "chưa có link"))
-                    .append("\n");
+            context.append(productCardLine(product)).append("\n");
         }
+    }
+
+    private String productCardLine(AffiliateProduct product) {
+        String platform = product.getPlatform() != null ? product.getPlatform().name() : "";
+        return "HI_PRODUCT"
+                + "|name=" + encoded(value(product.getName(), "Sản phẩm chăm sóc"))
+                + "|platform=" + encoded(platform)
+                + "|shop=" + encoded(product.getSourceName())
+                + "|category=" + encoded(value(product.getSymptomCategory(), value(product.getCategory(), "chăm sóc tại nhà")))
+                + "|tags=" + encoded(join(product.getSymptomTags()))
+                + "|price=" + encoded(priceText(product.getPrice()))
+                + "|image=" + encoded(product.getImageUrl())
+                + "|url=" + encoded(product.getAffiliateUrl());
+    }
+
+    private String encoded(String value) {
+        return URLEncoder.encode(value(value, ""), StandardCharsets.UTF_8);
+    }
+
+    private String priceText(BigDecimal value) {
+        if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) return "";
+        return value.stripTrailingZeros().toPlainString();
     }
 
     private Map<Long, SymptomDictionary> symptomMap() {
         return symptomDictionaryRepository.findAll().stream()
                 .collect(Collectors.toMap(SymptomDictionary::getId, item -> item, (a, b) -> a));
+    }
+
+    private List<DailyLog> distinctLogsByDate(List<DailyLog> logs) {
+        Map<LocalDate, DailyLog> byDate = new LinkedHashMap<>();
+        logs.stream()
+                .filter(log -> log.getLogDate() != null)
+                .sorted(Comparator
+                        .comparing(DailyLog::getLogDate, Comparator.reverseOrder())
+                        .thenComparing(
+                                log -> log.getUpdatedAt() != null ? log.getUpdatedAt() : Instant.EPOCH,
+                                Comparator.reverseOrder()
+                        ))
+                .forEach(log -> byDate.putIfAbsent(log.getLogDate(), log));
+        return List.copyOf(byDate.values());
     }
 
     private String range(CycleRecord record) {

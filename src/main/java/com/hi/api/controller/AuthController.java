@@ -4,11 +4,15 @@ import com.hi.api.dto.request.GoogleAuthRequest;
 import com.hi.api.dto.request.LoginRequest;
 import com.hi.api.dto.request.RegisterRequest;
 import com.hi.api.model.User;
-import com.hi.api.security.JwtUtil;
+import com.hi.api.service.AuthRateLimitService;
 import com.hi.api.service.AuthService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -18,17 +22,24 @@ import com.hi.api.dto.request.VerifyOtpRequest;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.time.Duration;
 
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
 
     private final AuthService authService;
-    private final JwtUtil jwtUtil;
+    private final AuthRateLimitService authRateLimitService;
 
-    public AuthController(AuthService authService, JwtUtil jwtUtil) {
+    @Value("${app.auth.cookie.secure:false}")
+    private boolean secureAuthCookie;
+
+    @Value("${app.jwt.expiration-ms}")
+    private long jwtExpirationMs;
+
+    public AuthController(AuthService authService, AuthRateLimitService authRateLimitService) {
         this.authService = authService;
-        this.jwtUtil = jwtUtil;
+        this.authRateLimitService = authRateLimitService;
     }
 
     @PostMapping("/register")
@@ -48,7 +59,7 @@ public class AuthController {
         response.put("success", true);
         response.put("message", "Đăng nhập thành công");
         response.put("data", payload);
-        return ResponseEntity.ok(response);
+        return withAuthCookie(response, payload);
     }
 
     @GetMapping("/me")
@@ -69,7 +80,7 @@ public class AuthController {
         response.put("success", true);
         response.put("message", "Làm mới phiên đăng nhập thành công");
         response.put("data", payload);
-        return ResponseEntity.ok(response);
+        return withAuthCookie(response, payload);
     }
 
     @PostMapping("/google")
@@ -80,7 +91,7 @@ public class AuthController {
             response.put("success", true);
             response.put("message", "Đăng nhập Google thành công");
             response.put("data", payload);
-            return ResponseEntity.ok(response);
+            return withAuthCookie(response, payload);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
@@ -97,7 +108,7 @@ public class AuthController {
             response.put("success", true);
             response.put("message", "Đăng nhập Facebook thành công");
             response.put("data", payload);
-            return ResponseEntity.ok(response);
+            return withAuthCookie(response, payload);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
@@ -107,8 +118,11 @@ public class AuthController {
     }
 
     @PostMapping("/forgot-password")
-    public ResponseEntity<Map<String, Object>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest req) {
+    public ResponseEntity<Map<String, Object>> forgotPassword(
+            @Valid @RequestBody ForgotPasswordRequest req,
+            HttpServletRequest request) {
         try {
+            authRateLimitService.check("forgot", req.getEmail(), clientIp(request), 5, 15);
             authService.forgotPassword(req);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
@@ -120,8 +134,11 @@ public class AuthController {
     }
 
     @PostMapping("/verify-otp")
-    public ResponseEntity<Map<String, Object>> verifyOtp(@Valid @RequestBody VerifyOtpRequest req) {
+    public ResponseEntity<Map<String, Object>> verifyOtp(
+            @Valid @RequestBody VerifyOtpRequest req,
+            HttpServletRequest request) {
         try {
+            authRateLimitService.check("verify-reset", req.getEmail(), clientIp(request), 10, 15);
             String resetToken = authService.verifyOtp(req);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
@@ -149,22 +166,28 @@ public class AuthController {
     }
 
     @PostMapping("/verify-activation")
-    public ResponseEntity<Map<String, Object>> verifyActivation(@Valid @RequestBody VerifyOtpRequest req) {
+    public ResponseEntity<Map<String, Object>> verifyActivation(
+            @Valid @RequestBody VerifyOtpRequest req,
+            HttpServletRequest request) {
         try {
+            authRateLimitService.check("verify-activation", req.getEmail(), clientIp(request), 10, 15);
             Map<String, Object> payload = authService.verifyActivation(req);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
             response.put("message", "Kích hoạt tài khoản thành công");
             response.put("data", payload);
-            return ResponseEntity.ok(response);
+            return withAuthCookie(response, payload);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
     }
 
     @PostMapping("/resend-activation")
-    public ResponseEntity<Map<String, Object>> resendActivation(@RequestParam String email) {
+    public ResponseEntity<Map<String, Object>> resendActivation(
+            @RequestParam String email,
+            HttpServletRequest request) {
         try {
+            authRateLimitService.check("resend-activation", email, clientIp(request), 5, 15);
             authService.resendActivationOtp(email);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
@@ -173,5 +196,51 @@ public class AuthController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
+    }
+
+    @PostMapping("/logout")
+    @SecurityRequirement(name = "Bearer Authentication")
+    public ResponseEntity<Map<String, Object>> logout() {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, expiredAuthCookie().toString())
+                .body(Map.of("success", true, "message", "ÄÃ£ Ä‘Äƒng xuáº¥t"));
+    }
+
+    private ResponseEntity<Map<String, Object>> withAuthCookie(Map<String, Object> body, Map<String, Object> payload) {
+        Object token = payload.get("token");
+        if (!(token instanceof String tokenValue) || tokenValue.isBlank()) {
+            return ResponseEntity.ok(body);
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, authCookie(tokenValue).toString())
+                .body(body);
+    }
+
+    private ResponseCookie authCookie(String token) {
+        return ResponseCookie.from("hi_access_token", token)
+                .httpOnly(true)
+                .secure(secureAuthCookie)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(Duration.ofMillis(jwtExpirationMs))
+                .build();
+    }
+
+    private ResponseCookie expiredAuthCookie() {
+        return ResponseCookie.from("hi_access_token", "")
+                .httpOnly(true)
+                .secure(secureAuthCookie)
+                .sameSite("Lax")
+                .path("/")
+                .maxAge(Duration.ZERO)
+                .build();
+    }
+
+    private String clientIp(HttpServletRequest request) {
+        String forwardedFor = request.getHeader("X-Forwarded-For");
+        if (forwardedFor != null && !forwardedFor.isBlank()) {
+            return forwardedFor.split(",")[0].trim();
+        }
+        return request.getRemoteAddr();
     }
 }

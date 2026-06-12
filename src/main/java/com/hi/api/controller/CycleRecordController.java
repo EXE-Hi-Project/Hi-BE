@@ -7,6 +7,7 @@ import com.hi.api.model.CycleRecord;
 import com.hi.api.model.User;
 import com.hi.api.service.CycleRecordService;
 import com.hi.api.service.DailyLogService;
+import com.hi.api.service.SubscriptionAccessService;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -25,10 +26,14 @@ public class CycleRecordController {
 
     private final CycleRecordService cycleRecordService;
     private final DailyLogService dailyLogService;
+    private final SubscriptionAccessService subscriptionAccessService;
 
-    public CycleRecordController(CycleRecordService cycleRecordService, DailyLogService dailyLogService) {
+    public CycleRecordController(CycleRecordService cycleRecordService,
+                                 DailyLogService dailyLogService,
+                                 SubscriptionAccessService subscriptionAccessService) {
         this.cycleRecordService = cycleRecordService;
         this.dailyLogService = dailyLogService;
+        this.subscriptionAccessService = subscriptionAccessService;
     }
 
     @GetMapping
@@ -43,6 +48,10 @@ public class CycleRecordController {
     @GetMapping("/insights")
     public ResponseEntity<Map<String, Object>> getInsights(@AuthenticationPrincipal User user) {
         CycleRecordInsightResponse insights = cycleRecordService.getInsights(user.getId());
+        insights = subscriptionAccessService.filterInsights(
+                insights,
+                subscriptionAccessService.getAccess(user).premium()
+        );
         return ResponseEntity.ok(Map.of("success", true, "insights", insights));
     }
 

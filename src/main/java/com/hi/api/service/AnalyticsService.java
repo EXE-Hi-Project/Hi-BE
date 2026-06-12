@@ -2,6 +2,7 @@ package com.hi.api.service;
 
 import com.hi.api.dto.request.TrackEventRequest;
 import com.hi.api.model.AnalyticsEvent;
+import com.hi.api.model.User;
 import com.hi.api.repository.AnalyticsEventRepository;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -14,12 +15,18 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class AnalyticsService {
 
+    private static final int MAX_EVENTS_PER_MINUTE = 120;
+    private static final int MAX_METADATA_KEYS = 12;
+    private static final int MAX_METADATA_VALUE_LENGTH = 200;
+
     private final AnalyticsEventRepository analyticsEventRepository;
     private final MongoTemplate mongoTemplate;
+    private final Map<String, RateBucket> rateBuckets = new ConcurrentHashMap<>();
 
     public AnalyticsService(AnalyticsEventRepository analyticsEventRepository, MongoTemplate mongoTemplate) {
         this.analyticsEventRepository = analyticsEventRepository;
@@ -27,15 +34,72 @@ public class AnalyticsService {
     }
 
     public AnalyticsEvent trackEvent(TrackEventRequest req) {
+        return trackEvent(req, null, null);
+    }
+
+    public AnalyticsEvent trackEvent(TrackEventRequest req, User authenticatedUser, String clientKey) {
+        enforceWriteLimit(req.getSessionId(), clientKey);
         AnalyticsEvent event = new AnalyticsEvent();
-        event.setSessionId(req.getSessionId());
-        event.setUserId(req.getUserId() != null && !req.getUserId().isBlank() ? req.getUserId() : null);
-        event.setEventType(req.getEventType());
-        event.setTarget(req.getTarget());
-        event.setElementText(req.getElementText());
-        event.setMetadata(req.getMetadata());
+        event.setSessionId(trim(req.getSessionId(), 80));
+        event.setUserId(authenticatedUser != null ? authenticatedUser.getId() : null);
+        event.setEventType(trim(req.getEventType(), 40));
+        event.setTarget(trim(req.getTarget(), 160));
+        event.setElementText(trim(req.getElementText(), 120));
+        event.setMetadata(safeMetadata(req.getMetadata()));
         event.setCreatedAt(Instant.now());
         return analyticsEventRepository.save(event);
+    }
+
+    private void enforceWriteLimit(String sessionId, String clientKey) {
+        String key = (clientKey == null ? "unknown" : clientKey) + ":" + (sessionId == null ? "none" : sessionId);
+        long minute = Instant.now().getEpochSecond() / 60;
+        RateBucket bucket = rateBuckets.compute(key, (ignored, existing) -> {
+            if (existing == null || existing.minute != minute) {
+                return new RateBucket(minute, 1);
+            }
+            existing.count++;
+            return existing;
+        });
+        if (bucket.count > MAX_EVENTS_PER_MINUTE) {
+            throw new IllegalArgumentException("QuÃ¡ nhiá»u sá»± kiá»‡n analytics trong thá»i gian ngáº¯n");
+        }
+        if (rateBuckets.size() > 10_000) {
+            rateBuckets.entrySet().removeIf(entry -> entry.getValue().minute < minute);
+        }
+    }
+
+    private Map<String, Object> safeMetadata(Map<String, Object> input) {
+        if (input == null || input.isEmpty()) return null;
+        Map<String, Object> safe = new LinkedHashMap<>();
+        input.entrySet().stream()
+                .limit(MAX_METADATA_KEYS)
+                .forEach(entry -> {
+                    String key = trim(entry.getKey(), 60);
+                    if (key == null || key.isBlank()) return;
+                    Object value = entry.getValue();
+                    if (value instanceof Number || value instanceof Boolean) {
+                        safe.put(key, value);
+                    } else if (value != null) {
+                        safe.put(key, trim(String.valueOf(value), MAX_METADATA_VALUE_LENGTH));
+                    }
+                });
+        return safe.isEmpty() ? null : safe;
+    }
+
+    private String trim(String value, int maxLength) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.length() <= maxLength ? trimmed : trimmed.substring(0, maxLength);
+    }
+
+    private static class RateBucket {
+        private final long minute;
+        private int count;
+
+        private RateBucket(long minute, int count) {
+            this.minute = minute;
+            this.count = count;
+        }
     }
 
     public Map<String, Object> getAnalyticsStats() {

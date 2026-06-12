@@ -15,6 +15,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -41,8 +42,11 @@ public class DailyLogController {
     public ResponseEntity<Map<String, Object>> getLog(
             @AuthenticationPrincipal User user,
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate logDate) {
-        DailyLog log = dailyLogService.getLog(user.getId(), logDate);
-        return ResponseEntity.ok(Map.of("success", true, "dailyLog", log));
+        DailyLog log = dailyLogService.getLog(user.getId(), logDate).orElse(null);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", true);
+        response.put("dailyLog", log);
+        return ResponseEntity.ok(response);
     }
 
     @PutMapping("/{logDate}")

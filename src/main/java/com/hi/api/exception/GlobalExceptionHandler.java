@@ -39,6 +39,27 @@ public class GlobalExceptionHandler {
                 .body(Map.of("success", false, "message", ex.getMessage()));
     }
 
+    @ExceptionHandler(AiQuotaExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleAiQuotaExceeded(AiQuotaExceededException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(Map.of(
+                        "success", false,
+                        "message", ex.getMessage(),
+                        "data", Map.of(
+                                "limit", ex.getLimit(),
+                                "used", ex.getUsed(),
+                                "remaining", 0,
+                                "resetsAt", ex.getResetsAt()
+                        )
+                  ));
+    }
+
+    @ExceptionHandler(AiServiceBusyException.class)
+    public ResponseEntity<Map<String, Object>> handleAiServiceBusy(AiServiceBusyException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("success", false, "message", ex.getMessage()));
+    }
+
     @ExceptionHandler(DuplicateKeyException.class)
     public ResponseEntity<Map<String, Object>> handleDuplicateKey(DuplicateKeyException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
