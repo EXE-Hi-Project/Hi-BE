@@ -29,6 +29,18 @@ jobs:
             git fetch origin main
             git reset --hard origin/main
 
+            echo "🔐 Ensuring runtime secrets..."
+            touch .env
+            JWT_SECRET_CURRENT=$(grep -E '^JWT_SECRET=' .env | tail -n 1 | cut -d= -f2- || true)
+            if [ -z "$JWT_SECRET_CURRENT" ] || echo "$JWT_SECRET_CURRENT" | grep -q 'HiLover_Secret_2026_ChangeMe' || [ ${#JWT_SECRET_CURRENT} -lt 32 ]; then
+              sed -i '/^JWT_SECRET=/d' .env
+              echo "JWT_SECRET=$(openssl rand -base64 48)" >> .env
+              chmod 600 .env
+              echo "✅ Generated JWT_SECRET in server .env"
+            else
+              echo "✅ JWT_SECRET already configured"
+            fi
+
             echo "☕ Verifying Java runtime..."
             if ! command -v java >/dev/null 2>&1; then
               sudo apt-get update
