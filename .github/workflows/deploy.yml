@@ -78,8 +78,23 @@ jobs:
               sudo apt-get install -y openjdk-17-jre-headless
             fi
 
+            echo "💾 Ensuring build swap..."
+            if ! sudo swapon --show --noheadings | grep -q .; then
+              if [ ! -f /swapfile ]; then
+                sudo fallocate -l 1G /swapfile
+                sudo chmod 600 /swapfile
+                sudo mkswap /swapfile
+              fi
+              sudo swapon /swapfile
+            fi
+            if ! grep -q '^/swapfile ' /etc/fstab; then
+              echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
+            fi
+            free -h
+
             echo "🛠️  Building Spring Boot jar..."
             chmod +x ./mvnw
+            export MAVEN_OPTS="-Xms64m -Xmx384m -XX:MaxMetaspaceSize=192m"
             ./mvnw clean package -DskipTests
 
             JAR_PATH=$(ls -1 target/hi-api-*.jar | head -n 1)
