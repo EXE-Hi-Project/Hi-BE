@@ -97,7 +97,8 @@ class AdminCampaignServiceTest {
                 auditRepository,
                 mock(TransactionRepository.class),
                 mongoTemplate,
-                notificationService
+                notificationService,
+                mock(RealtimeEventService.class)
         );
     }
 

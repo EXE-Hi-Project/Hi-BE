@@ -47,7 +47,8 @@ class CycleRecordServiceTest {
                 dailyLogSymptomRepository,
                 symptomDictionaryRepository,
                 userRepository,
-                sequenceService
+                sequenceService,
+                mock(RealtimeEventService.class)
         );
     }
 

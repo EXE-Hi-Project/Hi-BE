@@ -33,6 +33,7 @@ public class PartnerCareSuggestionService {
     private final PartnerAccessService partnerAccessService;
     private final NotificationService notificationService;
     private final SubscriptionAccessService subscriptionAccessService;
+    private final RealtimeEventService realtimeEventService;
 
     public PartnerCareSuggestionService(PartnerCareSuggestionRepository suggestionRepository,
                                         DailyLogRepository dailyLogRepository,
@@ -42,7 +43,8 @@ public class PartnerCareSuggestionService {
                                         CycleRecordService cycleRecordService,
                                         PartnerAccessService partnerAccessService,
                                         NotificationService notificationService,
-                                        SubscriptionAccessService subscriptionAccessService) {
+                                        SubscriptionAccessService subscriptionAccessService,
+                                        RealtimeEventService realtimeEventService) {
         this.suggestionRepository = suggestionRepository;
         this.dailyLogRepository = dailyLogRepository;
         this.symptomRepository = symptomRepository;
@@ -52,6 +54,7 @@ public class PartnerCareSuggestionService {
         this.partnerAccessService = partnerAccessService;
         this.notificationService = notificationService;
         this.subscriptionAccessService = subscriptionAccessService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public PartnerCareSuggestion getToday(String userId) {
@@ -153,6 +156,11 @@ public class PartnerCareSuggestionService {
                 "/settings/notifications?tab=today",
                 "CARE_SUGGESTION:" + saved.getRecipientUserId() + ":" + saved.getSuggestionDate(),
                 java.util.Map.of("suggestionId", saved.getId(), "date", saved.getSuggestionDate().toString())
+        );
+        realtimeEventService.sendPartner(
+                saved.getRecipientUserId(),
+                "partner.care_suggestion.created",
+                java.util.Map.of("suggestion", saved)
         );
         return saved;
     }

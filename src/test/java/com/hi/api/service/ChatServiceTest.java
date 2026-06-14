@@ -26,13 +26,15 @@ class ChatServiceTest {
         SubscriptionAccessService subscriptionAccessService = mock(SubscriptionAccessService.class);
         AiDailyUsageService aiDailyUsageService = mock(AiDailyUsageService.class);
         AiRequestAdmissionService aiRequestAdmissionService = mock(AiRequestAdmissionService.class);
+        RealtimeEventService realtimeEventService = mock(RealtimeEventService.class);
         ChatService service = new ChatService(
                 chatRepository,
                 aiService,
                 contextService,
                 subscriptionAccessService,
                 aiDailyUsageService,
-                aiRequestAdmissionService
+                aiRequestAdmissionService,
+                realtimeEventService
         );
         LocalDate sessionDate = LocalDate.of(2026, 6, 12);
         when(subscriptionAccessService.getAccess("user-1")).thenReturn(
@@ -88,6 +90,9 @@ class ChatServiceTest {
 
         ArgumentCaptor<String> contextCaptor = ArgumentCaptor.forClass(String.class);
         verify(aiService).chatOnce(eq("Đau 7/10, không sốt"), eq("user-1"), contextCaptor.capture());
+        verify(realtimeEventService).sendChat(eq("user-1"), eq("chat.ai.typing"), any());
+        verify(realtimeEventService).sendChat(eq("user-1"), eq("chat.ai.completed"), any());
+        verify(realtimeEventService).sendChat(eq("user-1"), eq("chat.usage.updated"), any());
         assertThat(contextCaptor.getValue())
                 .contains("Hội thoại gần đây trong phiên này")
                 .contains("User: Mình đau bụng kỳ kinh")

@@ -45,7 +45,8 @@ class DailyLogServiceTest {
                 sequenceService,
                 cycleRecordService,
                 userRepository,
-                notificationService
+                notificationService,
+                mock(RealtimeEventService.class)
         );
     }
 

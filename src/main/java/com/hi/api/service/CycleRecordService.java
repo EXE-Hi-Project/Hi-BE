@@ -50,19 +50,22 @@ public class CycleRecordService {
     private final SymptomDictionaryRepository symptomDictionaryRepository;
     private final UserRepository userRepository;
     private final SequenceService sequenceService;
+    private final RealtimeEventService realtimeEventService;
 
     public CycleRecordService(CycleRecordRepository cycleRecordRepository,
                               DailyLogRepository dailyLogRepository,
                               DailyLogSymptomRepository dailyLogSymptomRepository,
                               SymptomDictionaryRepository symptomDictionaryRepository,
                               UserRepository userRepository,
-                              SequenceService sequenceService) {
+                              SequenceService sequenceService,
+                              RealtimeEventService realtimeEventService) {
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogRepository = dailyLogRepository;
         this.dailyLogSymptomRepository = dailyLogSymptomRepository;
         this.symptomDictionaryRepository = symptomDictionaryRepository;
         this.userRepository = userRepository;
         this.sequenceService = sequenceService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public List<CycleRecord> getCycleRecords(String userId, LocalDate from, LocalDate to) {
@@ -89,7 +92,9 @@ public class CycleRecordService {
         record.setUserId(userId);
         apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(), req.getIsIgnored());
         ensureNoOverlap(userId, record, null);
-        return cycleRecordRepository.save(record);
+        CycleRecord saved = cycleRecordRepository.save(record);
+        emitPartnerCycleUpdate(userId, "created", saved);
+        return saved;
     }
 
     public Page<CycleRecord> getCycleRecordHistory(String userId, int page, int limit) {
@@ -124,7 +129,9 @@ public class CycleRecordService {
 
         apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(), req.getIsIgnored());
         ensureNoOverlap(userId, record, id);
-        return cycleRecordRepository.save(record);
+        CycleRecord saved = cycleRecordRepository.save(record);
+        emitPartnerCycleUpdate(userId, "updated", saved);
+        return saved;
     }
 
     @CacheEvict(value = "ai_context", key = "#user.id")
@@ -145,7 +152,9 @@ public class CycleRecordService {
                         record.setUserId(user.getId());
                         apply(record, startDate, endDate, user.getDefaultCycleLength(), user.getDefaultPeriodLength(), false);
                         ensureNoOverlap(user.getId(), record, null);
-                        return cycleRecordRepository.save(record);
+                        CycleRecord saved = cycleRecordRepository.save(record);
+                        emitPartnerCycleUpdate(user.getId(), "created", saved);
+                        return saved;
                     });
         } catch (DateTimeParseException ex) {
             throw new IllegalArgumentException("Ngày kỳ kinh không hợp lệ");
@@ -167,7 +176,9 @@ public class CycleRecordService {
                     record.setUserId(userId);
                     apply(record, startDate, null, user.getDefaultCycleLength(), user.getDefaultPeriodLength(), false);
                     ensureNoOverlap(userId, record, null);
-                    return cycleRecordRepository.save(record);
+                    CycleRecord saved = cycleRecordRepository.save(record);
+                    emitPartnerCycleUpdate(userId, "created", saved);
+                    return saved;
                 });
     }
 
@@ -176,6 +187,23 @@ public class CycleRecordService {
         CycleRecord record = cycleRecordRepository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy chu kỳ"));
         cycleRecordRepository.delete(record);
+        emitPartnerCycleUpdate(userId, "deleted", record);
+    }
+
+    private void emitPartnerCycleUpdate(String userId, String action, CycleRecord record) {
+        userRepository.findById(userId)
+                .filter(user -> user.getPartnerSharingPreferences() != null
+                        && Boolean.TRUE.equals(user.getPartnerSharingPreferences().getShareCycleData()))
+                .filter(user -> user.getPartnerId() != null && !user.getPartnerId().isBlank())
+                .ifPresent(user -> realtimeEventService.sendPartner(
+                        user.getPartnerId(),
+                        "partner.cycle.updated",
+                        java.util.Map.of(
+                                "userId", userId,
+                                "action", action,
+                                "record", record
+                        )
+                ));
     }
 
     public CycleRecordInsightResponse getInsights(String userId) {

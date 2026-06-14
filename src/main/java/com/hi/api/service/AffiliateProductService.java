@@ -41,6 +41,7 @@ public class AffiliateProductService {
     private final MongoTemplate mongoTemplate;
     private final AffiliateUrlPolicy affiliateUrlPolicy;
     private final AffiliateProductMetadataParser metadataParser;
+    private final RealtimeEventService realtimeEventService;
 
     public AffiliateProductService(AffiliateProductRepository affiliateProductRepository,
                                    AffiliateRevenueEventRepository affiliateRevenueEventRepository,
@@ -50,7 +51,8 @@ public class AffiliateProductService {
                                    AffiliateShopeeClient affiliateShopeeClient,
                                    MongoTemplate mongoTemplate,
                                    AffiliateUrlPolicy affiliateUrlPolicy,
-                                   AffiliateProductMetadataParser metadataParser) {
+                                   AffiliateProductMetadataParser metadataParser,
+                                   RealtimeEventService realtimeEventService) {
         this.affiliateProductRepository = affiliateProductRepository;
         this.affiliateRevenueEventRepository = affiliateRevenueEventRepository;
         this.clickTrackingRepository = clickTrackingRepository;
@@ -60,6 +62,7 @@ public class AffiliateProductService {
         this.mongoTemplate = mongoTemplate;
         this.affiliateUrlPolicy = affiliateUrlPolicy;
         this.metadataParser = metadataParser;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public List<AffiliateProduct> searchProducts(String q, AffiliatePlatform platform, String symptomCategory, Boolean active, int limit) {
@@ -236,7 +239,12 @@ public class AffiliateProductService {
         event.setOrderedAt(req.getOrderedAt() != null ? req.getOrderedAt() : Instant.now());
         event.setSettledAt(req.getSettledAt());
         event.setSourcePayload(req.getSourcePayload());
-        return affiliateRevenueEventRepository.save(event);
+        AffiliateRevenueEvent saved = affiliateRevenueEventRepository.save(event);
+        realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
+                "reason", "affiliate.revenue",
+                "revenueEventId", saved.getId()
+        ));
+        return saved;
     }
 
     public Map<String, Object> getAdminOverview() {

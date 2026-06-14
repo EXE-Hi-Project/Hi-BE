@@ -38,7 +38,8 @@ class CoupleQuestionServiceTest {
                 partnerAccessService,
                 mock(NotificationService.class),
                 mock(MongoTemplate.class),
-                mock(SubscriptionAccessService.class)
+                mock(SubscriptionAccessService.class),
+                mock(RealtimeEventService.class)
         );
     }
 

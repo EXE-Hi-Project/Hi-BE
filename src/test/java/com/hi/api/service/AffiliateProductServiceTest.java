@@ -36,7 +36,8 @@ class AffiliateProductServiceTest {
                 mock(AffiliateShopeeClient.class),
                 mock(MongoTemplate.class),
                 new AffiliateUrlPolicy(),
-                new AffiliateProductMetadataParser(new ObjectMapper())
+                new AffiliateProductMetadataParser(new ObjectMapper()),
+                mock(RealtimeEventService.class)
         );
 
         UpsertAffiliateProductRequest request = new UpsertAffiliateProductRequest();

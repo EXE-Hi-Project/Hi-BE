@@ -35,6 +35,7 @@ public class DailyLogService {
     private final CycleRecordService cycleRecordService;
     private final UserRepository userRepository;
     private final NotificationService notificationService;
+    private final RealtimeEventService realtimeEventService;
 
     public DailyLogService(DailyLogRepository dailyLogRepository,
                            DailyLogSymptomRepository dailyLogSymptomRepository,
@@ -42,7 +43,8 @@ public class DailyLogService {
                            SequenceService sequenceService,
                            CycleRecordService cycleRecordService,
                            UserRepository userRepository,
-                           NotificationService notificationService) {
+                           NotificationService notificationService,
+                           RealtimeEventService realtimeEventService) {
         this.dailyLogRepository = dailyLogRepository;
         this.dailyLogSymptomRepository = dailyLogSymptomRepository;
         this.symptomDictionaryRepository = symptomDictionaryRepository;
@@ -50,6 +52,7 @@ public class DailyLogService {
         this.cycleRecordService = cycleRecordService;
         this.userRepository = userRepository;
         this.notificationService = notificationService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public List<DailyLog> getLogs(String userId, LocalDate from, LocalDate to) {
@@ -163,6 +166,11 @@ public class DailyLogService {
                             "Cảm xúc mới từ " + senderName,
                             senderName + " vừa ghi cảm xúc: " + moodLabel(moodScore)
                     );
+                    realtimeEventService.sendPartner(user.getPartnerId(), "partner.mood.updated", Map.of(
+                            "userId", userId,
+                            "moodScore", moodScore,
+                            "label", moodLabel(moodScore)
+                    ));
                     return true;
                 })
                 .orElse(false);
