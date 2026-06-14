@@ -16,13 +16,16 @@ public class ClickTrackingService {
     private final ClickTrackingRepository clickTrackingRepository;
     private final AffiliateProductRepository affiliateProductRepository;
     private final SequenceService sequenceService;
+    private final RealtimeEventService realtimeEventService;
 
     public ClickTrackingService(ClickTrackingRepository clickTrackingRepository,
                                 AffiliateProductRepository affiliateProductRepository,
-                                SequenceService sequenceService) {
+                                SequenceService sequenceService,
+                                RealtimeEventService realtimeEventService) {
         this.clickTrackingRepository = clickTrackingRepository;
         this.affiliateProductRepository = affiliateProductRepository;
         this.sequenceService = sequenceService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public Map<String, Object> trackClick(String userId, Long productId) {
@@ -35,6 +38,10 @@ public class ClickTrackingService {
         tracking.setProductId(productId);
         tracking.setClickedAt(LocalDateTime.now());
         clickTrackingRepository.save(tracking);
+        realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
+                "reason", "affiliate.click",
+                "productId", productId
+        ));
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("tracking", tracking);

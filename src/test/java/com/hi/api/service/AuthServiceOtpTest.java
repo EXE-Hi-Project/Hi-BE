@@ -69,7 +69,8 @@ class AuthServiceOtpTest {
                 mock(JwtUtil.class),
                 tokenRepository,
                 mock(RestTemplate.class),
-                mock(EmailService.class)
+                mock(EmailService.class),
+                mock(RealtimeEventService.class)
         );
     }
 

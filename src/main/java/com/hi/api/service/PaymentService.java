@@ -17,6 +17,7 @@ import vn.payos.model.webhooks.WebhookData;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -27,6 +28,7 @@ public class PaymentService {
     private final UserRepository userRepository;
     private final TransactionRepository transactionRepository;
     private final PayOS payOS;
+    private final RealtimeEventService realtimeEventService;
 
     @Value("${app.client-url}")
     private String clientUrl;
@@ -34,10 +36,15 @@ public class PaymentService {
     @Value("${app.payment.return-url.allowed-origins:${app.client-url}}")
     private String allowedReturnOrigins;
 
-    public PaymentService(UserRepository userRepository, TransactionRepository transactionRepository, PayOS payOS) {
+    public PaymentService(
+            UserRepository userRepository,
+            TransactionRepository transactionRepository,
+            PayOS payOS,
+            RealtimeEventService realtimeEventService) {
         this.userRepository = userRepository;
         this.transactionRepository = transactionRepository;
         this.payOS = payOS;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public String createCheckoutSession(User user, String priceId, String originUrl) throws Exception {
@@ -157,6 +164,19 @@ public class PaymentService {
                     transactionRepository.save(transaction);
                 }
 
+                realtimeEventService.sendSubscription(user.getId(), "subscription.updated", Map.of(
+                        "subscription", user.getSubscription()
+                ));
+                realtimeEventService.sendSubscription(user.getId(), "payment.completed", Map.of(
+                        "orderCode", orderCode,
+                        "plan", plan,
+                        "amount", data.getAmount(),
+                        "currentPeriodEnd", currentPeriodEnd
+                ));
+                realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
+                        "reason", "payment.completed",
+                        "userId", user.getId()
+                ));
                 log.info("Successfully upgraded user {} to Premium. Expiration: {}", user.getEmail(), currentPeriodEnd);
             } else {
                 log.warn("User not found for PayOS orderCode: {}", orderCode);
@@ -181,6 +201,17 @@ public class PaymentService {
                     transactionRepository.save(transaction);
                 }
             }
+            realtimeEventService.sendSubscription(user.getId(), "subscription.updated", Map.of(
+                    "subscription", user.getSubscription()
+            ));
+            Map<String, Object> canceledData = new java.util.LinkedHashMap<>();
+            canceledData.put("cancelAtPeriodEnd", user.getSubscription().getCancelAtPeriodEnd());
+            canceledData.put("activeUntil", activeUntil);
+            realtimeEventService.sendSubscription(user.getId(), "payment.canceled", canceledData);
+            realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
+                    "reason", "payment.canceled",
+                    "userId", user.getId()
+            ));
             log.info("Canceled auto-renewal/active subscription status for user: {}", user.getEmail());
         }
     }

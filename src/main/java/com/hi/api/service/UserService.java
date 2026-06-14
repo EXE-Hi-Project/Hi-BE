@@ -37,6 +37,7 @@ public class UserService {
     private final CacheManager cacheManager;
     private final PartnerAccessService partnerAccessService;
     private final SubscriptionAccessService subscriptionAccessService;
+    private final RealtimeEventService realtimeEventService;
 
     public UserService(UserRepository userRepository,
                        CycleRecordRepository cycleRecordRepository,
@@ -45,7 +46,8 @@ public class UserService {
                        NotificationService notificationService,
                        CacheManager cacheManager,
                        PartnerAccessService partnerAccessService,
-                       SubscriptionAccessService subscriptionAccessService) {
+                       SubscriptionAccessService subscriptionAccessService,
+                       RealtimeEventService realtimeEventService) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogRepository = dailyLogRepository;
@@ -54,6 +56,7 @@ public class UserService {
         this.cacheManager = cacheManager;
         this.partnerAccessService = partnerAccessService;
         this.subscriptionAccessService = subscriptionAccessService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     @CacheEvict(value = "ai_context", key = "#userId")
@@ -320,6 +323,13 @@ public class UserService {
                 displayName(savedUser, "Một người") + " đã kết nối với bạn"
         );
 
+        Map<String, Object> connection = Map.of(
+                "userId", savedUser.getId(),
+                "partnerId", savedPartner.getId()
+        );
+        realtimeEventService.sendPartner(savedUser.getId(), "partner.connected", connection);
+        realtimeEventService.sendPartner(savedPartner.getId(), "partner.connected", connection);
+
         return Map.of(
                 "id", savedPartner.getId(),
                 "name", savedPartner.getName() != null ? savedPartner.getName() : "",
@@ -363,6 +373,15 @@ public class UserService {
                     userId, "PARTNER_DISCONNECT", "Hủy kết nối",
                     "Bạn đã hủy kết nối thành công"
             );
+        }
+
+        if (partnerId != null) {
+            Map<String, Object> disconnection = Map.of(
+                    "userId", userId,
+                    "partnerId", partnerId
+            );
+            realtimeEventService.sendPartner(userId, "partner.disconnected", disconnection);
+            realtimeEventService.sendPartner(partnerId, "partner.disconnected", disconnection);
         }
 
         Map<String, Object> response = new LinkedHashMap<>();

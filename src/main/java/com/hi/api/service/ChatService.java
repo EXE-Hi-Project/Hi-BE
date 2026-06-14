@@ -24,19 +24,22 @@ public class ChatService {
     private final SubscriptionAccessService subscriptionAccessService;
     private final AiDailyUsageService aiDailyUsageService;
     private final AiRequestAdmissionService aiRequestAdmissionService;
+    private final RealtimeEventService realtimeEventService;
 
     public ChatService(ChatRepository chatRepository,
                        ChatBoxAIService chatBoxAIService,
                        ChatContextService chatContextService,
                        SubscriptionAccessService subscriptionAccessService,
                        AiDailyUsageService aiDailyUsageService,
-                       AiRequestAdmissionService aiRequestAdmissionService) {
+                       AiRequestAdmissionService aiRequestAdmissionService,
+                       RealtimeEventService realtimeEventService) {
         this.chatRepository = chatRepository;
         this.chatBoxAIService = chatBoxAIService;
         this.chatContextService = chatContextService;
         this.subscriptionAccessService = subscriptionAccessService;
         this.aiDailyUsageService = aiDailyUsageService;
         this.aiRequestAdmissionService = aiRequestAdmissionService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public List<ChatMessage> getHistory(String userId, LocalDate requestedDate) {
@@ -104,6 +107,11 @@ public class ChatService {
         userMessage.setSessionTitle(sessionTitle);
         userMessage.setCreatedAt(Instant.now());
         ChatMessage savedUserMessage = chatRepository.save(userMessage);
+        realtimeEventService.sendChat(userId, "chat.message.created", Map.of(
+                "message", savedUserMessage,
+                "sessionDate", sessionDate
+        ));
+        realtimeEventService.sendChat(userId, "chat.ai.typing", Map.of("sessionDate", sessionDate));
 
         try {
             String context = chatContextService.buildContext(userId);
@@ -124,9 +132,22 @@ public class ChatService {
             assistantMessage.setSessionTitle(sessionTitle);
             assistantMessage.setCreatedAt(Instant.now());
             ChatMessage savedAssistantMessage = chatRepository.save(assistantMessage);
+            realtimeEventService.sendChat(userId, "chat.message.created", Map.of(
+                    "message", savedAssistantMessage,
+                    "sessionDate", sessionDate
+            ));
+            realtimeEventService.sendChat(userId, "chat.ai.completed", Map.of(
+                    "message", savedAssistantMessage,
+                    "sessionDate", sessionDate
+            ));
+            realtimeEventService.sendChat(userId, "chat.usage.updated", usage);
             return new SendResult(savedUserMessage, savedAssistantMessage, usage);
         } catch (RuntimeException ex) {
             aiDailyUsageService.release(userId);
+            realtimeEventService.sendChat(userId, "chat.ai.failed", Map.of(
+                    "sessionDate", sessionDate,
+                    "message", ex.getMessage() == null ? "Hi AI chưa thể trả lời lúc này." : ex.getMessage()
+            ));
             throw ex;
         }
     }

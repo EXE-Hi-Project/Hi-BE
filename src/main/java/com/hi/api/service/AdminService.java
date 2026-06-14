@@ -32,6 +32,7 @@ public class AdminService {
     private final TransactionRepository transactionRepository;
     private final MongoTemplate mongoTemplate;
     private final NotificationService notificationService;
+    private final RealtimeEventService realtimeEventService;
 
     @Value("${FINANCE_PAID_USER_RATE:0.15}")
     private double paidUserRate;
@@ -58,7 +59,8 @@ public class AdminService {
                         DailyLogSymptomRepository dailyLogSymptomRepository, NotificationRepository notificationRepository,
                         ChatRepository chatRepository, AdminAuditLogRepository auditLogRepository,
                         TransactionRepository transactionRepository, MongoTemplate mongoTemplate,
-                        NotificationService notificationService) {
+                        NotificationService notificationService,
+                        RealtimeEventService realtimeEventService) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogSymptomRepository = dailyLogSymptomRepository;
@@ -68,6 +70,7 @@ public class AdminService {
         this.transactionRepository = transactionRepository;
         this.mongoTemplate = mongoTemplate;
         this.notificationService = notificationService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     private record MonthInfo(int year, int month, String key, String label, Instant startDate) {}
@@ -505,6 +508,11 @@ public class AdminService {
         log.setIpAddress(ipAddress);
         auditLogRepository.save(log);
 
+        realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
+                "reason", "notification.campaign",
+                "campaignId", campaignId,
+                "recipientCount", recipients.size()
+        ));
         return Map.of(
                 "campaignId", campaignId,
                 "target", normalizeCampaignTarget(target),

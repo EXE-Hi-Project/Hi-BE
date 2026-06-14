@@ -17,10 +17,15 @@ public class NotificationService {
 
     private final NotificationRepository notificationRepository;
     private final MongoTemplate mongoTemplate;
+    private final RealtimeEventService realtimeEventService;
 
-    public NotificationService(NotificationRepository notificationRepository, MongoTemplate mongoTemplate) {
+    public NotificationService(
+            NotificationRepository notificationRepository,
+            MongoTemplate mongoTemplate,
+            RealtimeEventService realtimeEventService) {
         this.notificationRepository = notificationRepository;
         this.mongoTemplate = mongoTemplate;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public List<Notification> getNotifications(String userId) {
@@ -31,12 +36,19 @@ public class NotificationService {
         Query query = Query.query(Criteria.where("userId").is(userId).and("read").is(false));
         Update update = new Update().set("read", true);
         mongoTemplate.updateMulti(query, update, Notification.class);
+        realtimeEventService.sendNotification(userId, "notification.read_all", Map.of("unreadCount", 0));
+        emitUnreadCount(userId);
     }
 
     public void markRead(String userId, String notificationId) {
         notificationRepository.findByIdAndUserId(notificationId, userId).ifPresent(n -> {
             n.setRead(true);
             notificationRepository.save(n);
+            realtimeEventService.sendNotification(userId, "notification.read", Map.of(
+                    "notificationId", notificationId,
+                    "unreadCount", getUnreadCount(userId)
+            ));
+            emitUnreadCount(userId);
         });
     }
     public void createNotification(String userId, String type, String title, String message) {
@@ -60,7 +72,13 @@ public class NotificationService {
         notification.setActionUrl(actionUrl);
         notification.setDedupeKey(dedupeKey);
         notification.setMetadata(metadata);
-        return notificationRepository.save(notification);
+        Notification saved = notificationRepository.save(notification);
+        realtimeEventService.sendNotification(userId, "notification.created", Map.of(
+                "notification", saved,
+                "unreadCount", getUnreadCount(userId)
+        ));
+        emitUnreadCount(userId);
+        return saved;
     }
 
     public Notification createIdempotentNotification(
@@ -87,5 +105,11 @@ public class NotificationService {
 
     public long getUnreadCount(String userId) {
         return notificationRepository.countByUserIdAndRead(userId, false);
+    }
+
+    private void emitUnreadCount(String userId) {
+        realtimeEventService.sendNotification(userId, "notification.unread_count", Map.of(
+                "unreadCount", getUnreadCount(userId)
+        ));
     }
 }

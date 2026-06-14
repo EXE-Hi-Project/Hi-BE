@@ -38,6 +38,7 @@ public class CoupleQuestionService {
     private final NotificationService notificationService;
     private final MongoTemplate mongoTemplate;
     private final SubscriptionAccessService subscriptionAccessService;
+    private final RealtimeEventService realtimeEventService;
 
     public CoupleQuestionService(CoupleQuestionSessionRepository sessionRepository,
                                  DailyQuestionRepository questionRepository,
@@ -45,7 +46,8 @@ public class CoupleQuestionService {
                                  PartnerAccessService partnerAccessService,
                                  NotificationService notificationService,
                                  MongoTemplate mongoTemplate,
-                                 SubscriptionAccessService subscriptionAccessService) {
+                                 SubscriptionAccessService subscriptionAccessService,
+                                 RealtimeEventService realtimeEventService) {
         this.sessionRepository = sessionRepository;
         this.questionRepository = questionRepository;
         this.userRepository = userRepository;
@@ -53,6 +55,7 @@ public class CoupleQuestionService {
         this.notificationService = notificationService;
         this.mongoTemplate = mongoTemplate;
         this.subscriptionAccessService = subscriptionAccessService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     public Map<String, Object> getToday(String userId) {
@@ -85,6 +88,7 @@ public class CoupleQuestionService {
             try {
                 CoupleQuestionSession saved = sessionRepository.save(session);
                 notifyNewQuestion(user, partner, date);
+                emitQuestionUpdate(saved);
                 return saved;
             } catch (DuplicateKeyException duplicate) {
                 return sessionRepository.findByPairKeyAndQuestionDate(pairKey, date).orElseThrow();
@@ -127,6 +131,7 @@ public class CoupleQuestionService {
             unlock(updated);
             updated = sessionRepository.findById(updated.getId()).orElse(updated);
         }
+        emitQuestionUpdate(updated);
         return sessionResponse(updated, userId, true);
     }
 
@@ -138,7 +143,9 @@ public class CoupleQuestionService {
                 Query.query(Criteria.where("_id").is(session.getId()).and("participantIds").is(userId)),
                 new Update().addToSet("skippedBy", userId),
                 CoupleQuestionSession.class);
-        return sessionResponse(sessionRepository.findById(session.getId()).orElseThrow(), userId, true);
+        CoupleQuestionSession updated = sessionRepository.findById(session.getId()).orElseThrow();
+        emitQuestionUpdate(updated);
+        return sessionResponse(updated, userId, true);
     }
 
     public Map<String, Object> getSession(String userId, String sessionId) {
@@ -195,7 +202,15 @@ public class CoupleQuestionService {
                 Query.query(Criteria.where("_id").is(sessionId).and("unlockedAt").ne(null)),
                 new Update().push("messages", message),
                 CoupleQuestionSession.class);
-        return sessionResponse(sessionRepository.findById(sessionId).orElseThrow(), userId, true);
+        CoupleQuestionSession updated = sessionRepository.findById(sessionId).orElseThrow();
+        for (String participantId : updated.getParticipantIds()) {
+            realtimeEventService.sendPartner(participantId, "partner.question.message.created", Map.of(
+                    "sessionId", sessionId,
+                    "message", message
+            ));
+        }
+        emitQuestionUpdate(updated);
+        return sessionResponse(updated, userId, true);
     }
 
     private void unlock(CoupleQuestionSession session) {
@@ -205,6 +220,7 @@ public class CoupleQuestionService {
                 FindAndModifyOptions.options().returnNew(true),
                 CoupleQuestionSession.class);
         if (unlocked == null) return;
+        emitQuestionUpdate(unlocked);
         for (String participantId : unlocked.getParticipantIds()) {
             notificationService.createIdempotentNotification(
                     participantId,
@@ -249,6 +265,17 @@ public class CoupleQuestionService {
 
     private String partnerHubUrl(String tab) {
         return "/settings/notifications?tab=" + tab;
+    }
+
+    private void emitQuestionUpdate(CoupleQuestionSession session) {
+        Map<String, Object> data = Map.of(
+                "sessionId", session.getId(),
+                "questionDate", session.getQuestionDate(),
+                "unlocked", session.getUnlockedAt() != null
+        );
+        for (String participantId : session.getParticipantIds()) {
+            realtimeEventService.sendPartner(participantId, "partner.question.updated", data);
+        }
     }
 
     private Map<String, Object> sessionResponse(CoupleQuestionSession session, String userId, boolean activePair) {

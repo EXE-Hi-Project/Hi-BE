@@ -36,6 +36,7 @@ public class AuthService {
     private final RestTemplate restTemplate;
     private final PasswordResetTokenRepository tokenRepository;
     private final EmailService emailService;
+    private final RealtimeEventService realtimeEventService;
 
     @Value("${app.admin.emails:}")
     private String adminEmailsStr;
@@ -46,13 +47,15 @@ public class AuthService {
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
             JwtUtil jwtUtil, PasswordResetTokenRepository tokenRepository,
             RestTemplate restTemplate,
-            EmailService emailService) {
+            EmailService emailService,
+            RealtimeEventService realtimeEventService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.tokenRepository = tokenRepository;
         this.restTemplate = restTemplate;
         this.emailService = emailService;
+        this.realtimeEventService = realtimeEventService;
     }
 
     private String hashToken(String plainToken) {
@@ -105,6 +108,10 @@ public class AuthService {
         user.setAccountStatus("PENDING_ACTIVATION");
 
         userRepository.save(user);
+        realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
+                "reason", "user.created",
+                "userId", user.getId()
+        ));
 
         // Sinh mã OTP 6 số ngẫu nhiên
         String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
