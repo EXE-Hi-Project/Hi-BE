@@ -157,6 +157,9 @@ public class AuthService {
         if (req.getCredential() == null || req.getCredential().isBlank()) {
             throw new IllegalArgumentException("Thiếu Google credential");
         }
+        if (googleClientId == null || googleClientId.isBlank()) {
+            throw new IllegalStateException("GOOGLE_CLIENT_ID chưa được cấu hình trên server");
+        }
 
         GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
                 new NetHttpTransport(), GsonFactory.getDefaultInstance())
