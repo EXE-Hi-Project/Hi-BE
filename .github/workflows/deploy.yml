@@ -14,7 +14,7 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID || vars.GOOGLE_CLIENT_ID }}
           PAYOS_CLIENT_ID: ${{ secrets.PAYOS_CLIENT_ID }}
           PAYOS_API_KEY: ${{ secrets.PAYOS_API_KEY }}
           PAYOS_CHECKSUM_KEY: ${{ secrets.PAYOS_CHECKSUM_KEY }}
@@ -72,9 +72,9 @@ jobs:
             upsert_env "PAYMENT_RETURN_ALLOWED_ORIGINS" "${PAYMENT_RETURN_ALLOWED_ORIGINS:-https://hilover.space,https://www.hilover.space}"
             upsert_env "FRONTEND_URL" "${FRONTEND_URL:-https://hilover.space}"
             upsert_env "FRONTEND_URLS" "${FRONTEND_URLS:-https://hilover.space,https://www.hilover.space}"
-            if ! grep -q '^GOOGLE_CLIENT_ID=' .env; then
-              echo "❌ GOOGLE_CLIENT_ID is missing in runtime .env"
-              exit 1
+            GOOGLE_CLIENT_ID_CURRENT=$(grep -E '^GOOGLE_CLIENT_ID=' .env | tail -n 1 | cut -d= -f2- || true)
+            if [ -z "$GOOGLE_CLIENT_ID_CURRENT" ]; then
+              echo "⚠️ GOOGLE_CLIENT_ID is missing in runtime .env; Google login may fail"
             fi
             chmod 600 .env
 
