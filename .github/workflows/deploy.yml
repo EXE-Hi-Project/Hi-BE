@@ -14,7 +14,7 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID || vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID || vars.GOOGLE_CLIENT_ID || '315410090730-6bhvppf1p0jlja3s0o4es8pbc1ob2srm.apps.googleusercontent.com' }}
           PAYOS_CLIENT_ID: ${{ secrets.PAYOS_CLIENT_ID }}
           PAYOS_API_KEY: ${{ secrets.PAYOS_API_KEY }}
           PAYOS_CHECKSUM_KEY: ${{ secrets.PAYOS_CHECKSUM_KEY }}
