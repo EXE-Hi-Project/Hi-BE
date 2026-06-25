@@ -14,6 +14,7 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID || vars.GOOGLE_CLIENT_ID || '315410090730-6bhvppf1p0jlja3s0o4es8pbc1ob2srm.apps.googleusercontent.com' }}
           PAYOS_CLIENT_ID: ${{ secrets.PAYOS_CLIENT_ID }}
           PAYOS_API_KEY: ${{ secrets.PAYOS_API_KEY }}
           PAYOS_CHECKSUM_KEY: ${{ secrets.PAYOS_CHECKSUM_KEY }}
@@ -26,7 +27,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          envs: PAYOS_CLIENT_ID,PAYOS_API_KEY,PAYOS_CHECKSUM_KEY,CLIENT_URL,PAYMENT_RETURN_ALLOWED_ORIGINS,FRONTEND_URL,FRONTEND_URLS
+          envs: GOOGLE_CLIENT_ID,PAYOS_CLIENT_ID,PAYOS_API_KEY,PAYOS_CHECKSUM_KEY,CLIENT_URL,PAYMENT_RETURN_ALLOWED_ORIGINS,FRONTEND_URL,FRONTEND_URLS
           script: |
             set -e
             echo "📦 Checking repo..."
@@ -66,10 +67,15 @@ jobs:
             upsert_env "PAYOS_CLIENT_ID" "$PAYOS_CLIENT_ID"
             upsert_env "PAYOS_API_KEY" "$PAYOS_API_KEY"
             upsert_env "PAYOS_CHECKSUM_KEY" "$PAYOS_CHECKSUM_KEY"
+            upsert_env "GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_ID"
             upsert_env "CLIENT_URL" "${CLIENT_URL:-https://hilover.space}"
             upsert_env "PAYMENT_RETURN_ALLOWED_ORIGINS" "${PAYMENT_RETURN_ALLOWED_ORIGINS:-https://hilover.space,https://www.hilover.space}"
             upsert_env "FRONTEND_URL" "${FRONTEND_URL:-https://hilover.space}"
             upsert_env "FRONTEND_URLS" "${FRONTEND_URLS:-https://hilover.space,https://www.hilover.space}"
+            GOOGLE_CLIENT_ID_CURRENT=$(grep -E '^GOOGLE_CLIENT_ID=' .env | tail -n 1 | cut -d= -f2- || true)
+            if [ -z "$GOOGLE_CLIENT_ID_CURRENT" ]; then
+              echo "⚠️ GOOGLE_CLIENT_ID is missing in runtime .env; Google login may fail"
+            fi
             chmod 600 .env
 
             echo "☕ Verifying Java runtime..."
