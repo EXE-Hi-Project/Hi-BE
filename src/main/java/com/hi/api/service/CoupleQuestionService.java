@@ -17,13 +17,14 @@ import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.UUID;
 
 @Service
@@ -58,13 +59,69 @@ public class CoupleQuestionService {
         this.realtimeEventService = realtimeEventService;
     }
 
+    private boolean isSessionFinished(CoupleQuestionSession session) {
+        if (session == null) {
+            return true;
+        }
+        if (session.getUnlockedAt() != null) {
+            return true;
+        }
+        List<String> participants = session.getParticipantIds();
+        if (participants == null || participants.isEmpty()) {
+            return true;
+        }
+        for (String pId : participants) {
+            boolean answered = session.getAnswers() != null && session.getAnswers().containsKey(pId);
+            boolean skipped = session.getSkippedBy() != null && session.getSkippedBy().contains(pId);
+            if (!answered && !skipped) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean shouldUnlock(CoupleQuestionSession session) {
+        if (session == null || session.getUnlockedAt() != null) {
+            return false;
+        }
+        List<String> participants = session.getParticipantIds();
+        if (participants == null || participants.isEmpty()) {
+            return false;
+        }
+        for (String pId : participants) {
+            boolean answered = session.getAnswers() != null && session.getAnswers().containsKey(pId);
+            boolean skipped = session.getSkippedBy() != null && session.getSkippedBy().contains(pId);
+            if (!answered && !skipped) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private CoupleQuestionSession getActiveOrCreateToday(User user, User partner) {
+        subscriptionAccessService.requireCouplePremium(user, partner);
+        String pairKey = partnerAccessService.pairKey(user.getId(), partner.getId());
+        Optional<CoupleQuestionSession> latestOpt = sessionRepository.findFirstByPairKeyOrderByQuestionDateDesc(pairKey);
+        if (latestOpt.isPresent()) {
+            CoupleQuestionSession latest = latestOpt.get();
+            if (!isSessionFinished(latest)) {
+                return latest;
+            }
+            LocalDate today = LocalDate.now(APP_ZONE);
+            if (latest.getQuestionDate().equals(today)) {
+                return latest;
+            }
+        }
+        return getOrCreate(user, partner, LocalDate.now(APP_ZONE));
+    }
+
     public Map<String, Object> getToday(String userId) {
         User user = partnerAccessService.requireUser(userId);
         User partner = partnerAccessService.requireCurrentPartner(user);
         if (Boolean.FALSE.equals(partnerAccessService.notificationPreferences(user).getDailyQuestionsEnabled())) {
             throw new IllegalArgumentException("Bạn đang tắt Câu hỏi của chúng mình");
         }
-        CoupleQuestionSession session = getOrCreate(user, partner, LocalDate.now(APP_ZONE));
+        CoupleQuestionSession session = getActiveOrCreateToday(user, partner);
         return sessionResponse(session, userId, true);
     }
 
@@ -99,7 +156,7 @@ public class CoupleQuestionService {
     public Map<String, Object> answerToday(String userId, String content) {
         User user = partnerAccessService.requireUser(userId);
         User partner = partnerAccessService.requireCurrentPartner(user);
-        CoupleQuestionSession session = getOrCreate(user, partner, LocalDate.now(APP_ZONE));
+        CoupleQuestionSession session = getActiveOrCreateToday(user, partner);
         CoupleQuestionSession before = sessionRepository.findById(session.getId()).orElseThrow();
         boolean partnerAlreadyAnswered = before.getAnswers() != null && before.getAnswers().containsKey(partner.getId());
 
@@ -127,7 +184,7 @@ public class CoupleQuestionService {
         if (!partnerAlreadyAnswered) {
             notifyPartnerAnswered(partner, user, updated);
         }
-        if (updated.getAnswers() != null && updated.getAnswers().keySet().containsAll(updated.getParticipantIds())) {
+        if (shouldUnlock(updated)) {
             unlock(updated);
             updated = sessionRepository.findById(updated.getId()).orElse(updated);
         }
@@ -138,12 +195,16 @@ public class CoupleQuestionService {
     public Map<String, Object> skipToday(String userId) {
         User user = partnerAccessService.requireUser(userId);
         User partner = partnerAccessService.requireCurrentPartner(user);
-        CoupleQuestionSession session = getOrCreate(user, partner, LocalDate.now(APP_ZONE));
+        CoupleQuestionSession session = getActiveOrCreateToday(user, partner);
         mongoTemplate.updateFirst(
                 Query.query(Criteria.where("_id").is(session.getId()).and("participantIds").is(userId)),
                 new Update().addToSet("skippedBy", userId),
                 CoupleQuestionSession.class);
         CoupleQuestionSession updated = sessionRepository.findById(session.getId()).orElseThrow();
+        if (shouldUnlock(updated)) {
+            unlock(updated);
+            updated = sessionRepository.findById(updated.getId()).orElse(updated);
+        }
         emitQuestionUpdate(updated);
         return sessionResponse(updated, userId, true);
     }
@@ -157,6 +218,56 @@ public class CoupleQuestionService {
         String otherId = session.getParticipantIds().stream().filter(id -> !id.equals(userId)).findFirst().orElse(null);
         boolean activePair = partnerAccessService.isActivePair(userId, otherId);
         return sessionResponse(session, userId, activePair);
+    }
+
+    public Map<String, Object> answerSession(String userId, String sessionId, String content) {
+        User user = partnerAccessService.requireUser(userId);
+        User partner = partnerAccessService.requireCurrentPartner(user);
+        subscriptionAccessService.requireCouplePremium(user, partner);
+
+        CoupleQuestionSession session = sessionRepository.findByIdAndParticipantIdsContaining(sessionId, userId)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy câu hỏi"));
+
+        if (!session.getPairKey().equals(partnerAccessService.pairKey(userId, partner.getId()))) {
+            throw new AccessDeniedException("Bạn không có quyền trả lời câu hỏi này");
+        }
+
+        CoupleQuestionSession before = sessionRepository.findById(session.getId()).orElseThrow();
+        boolean partnerAlreadyAnswered = before.getAnswers() != null && before.getAnswers().containsKey(partner.getId());
+
+        Instant now = Instant.now();
+        CoupleQuestionSession.Answer answer = new CoupleQuestionSession.Answer();
+        answer.setUserId(userId);
+        answer.setContent(content.trim());
+        answer.setAnsweredAt(before.getAnswers() != null && before.getAnswers().get(userId) != null
+                ? before.getAnswers().get(userId).getAnsweredAt()
+                : now);
+        answer.setUpdatedAt(now);
+
+        Query query = Query.query(Criteria.where("_id").is(session.getId())
+                .and("participantIds").is(userId)
+                .and("unlockedAt").is(null));
+        Update update = new Update()
+                .set("answers." + userId, answer)
+                .set("updatedAt", now);
+        CoupleQuestionSession updated = mongoTemplate.findAndModify(
+                query, update, FindAndModifyOptions.options().returnNew(true), CoupleQuestionSession.class);
+        if (updated == null) {
+            throw new IllegalArgumentException("Câu trả lời đã được mở khóa và không thể chỉnh sửa");
+        }
+
+        if (!partnerAlreadyAnswered) {
+            notifyPartnerAnswered(partner, user, updated);
+        }
+        if (shouldUnlock(updated)) {
+            unlock(updated);
+            updated = sessionRepository.findById(updated.getId()).orElse(updated);
+        }
+        emitQuestionUpdate(updated);
+
+        String otherId = updated.getParticipantIds().stream().filter(id -> !id.equals(userId)).findFirst().orElse(null);
+        boolean activePair = partnerAccessService.isActivePair(userId, otherId);
+        return sessionResponse(updated, userId, activePair);
     }
 
     public Map<String, Object> history(String userId, int page, int limit) {

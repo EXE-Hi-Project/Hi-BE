@@ -45,7 +45,8 @@ public class AdminSystemHealthService {
         Map<String, Object> mongoStatus;
         try {
             Document result = mongoTemplate.executeCommand("{ ping: 1 }");
-            boolean healthy = result.getDouble("ok") == 1.0;
+            Object okVal = result.get("ok");
+            boolean healthy = okVal instanceof Number && ((Number) okVal).doubleValue() == 1.0;
             mongoStatus = service(
                     "MongoDB",
                     healthy ? "HEALTHY" : "DEGRADED",
@@ -53,7 +54,9 @@ public class AdminSystemHealthService {
                     elapsedMillis(mongoStartedAt)
             );
         } catch (Exception ex) {
-            mongoStatus = service("MongoDB", "UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu", elapsedMillis(mongoStartedAt));
+            System.err.println("MongoDB Health Check Failed: " + ex.getMessage());
+            ex.printStackTrace();
+            mongoStatus = service("MongoDB", "UNAVAILABLE", "Không thể kết nối cơ sở dữ liệu: " + ex.getMessage(), elapsedMillis(mongoStartedAt));
         }
 
         Map<String, Object> aiStatus;
