@@ -16,4 +16,5 @@ public interface CoupleQuestionSessionRepository extends MongoRepository<CoupleQ
     List<CoupleQuestionSession> findByPairKeyAndQuestionDateBetweenOrderByQuestionDateAsc(
             String pairKey, LocalDate from, LocalDate to);
     Optional<CoupleQuestionSession> findFirstByPairKeyAndUnlockedAtIsNotNullOrderByQuestionDateDesc(String pairKey);
+    Optional<CoupleQuestionSession> findFirstByPairKeyOrderByQuestionDateDesc(String pairKey);
 }
