@@ -1,8 +1,13 @@
 package com.hi.api.service;
 
+import com.hi.api.model.AffiliatePlatform;
+import com.hi.api.model.AffiliateProduct;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.ObjectProvider;
+
+import java.math.BigDecimal;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -11,6 +16,31 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class ChatBoxAIServiceTest {
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void productQuestionUsesUserKeywordsBeforeCallingProvider() {
+        ObjectProvider<ChatClient.Builder> builderProvider = mock(ObjectProvider.class);
+        when(builderProvider.getIfAvailable()).thenReturn(null);
+        AffiliateProductService affiliateProductService = mock(AffiliateProductService.class);
+        AffiliateProduct product = new AffiliateProduct();
+        product.setName("Acne Patch");
+        product.setPlatform(AffiliatePlatform.SHOPEE);
+        product.setSymptomCategory("mun");
+        product.setSymptomTags(List.of("dan mun", "acne"));
+        product.setPrice(BigDecimal.valueOf(59000));
+        product.setAffiliateUrl("https://shopee.vn/acne-patch");
+        when(affiliateProductService.searchProductsByUserKeywords(anyString(), org.mockito.ArgumentMatchers.eq(4)))
+                .thenReturn(List.of(product));
+
+        ChatBoxAIService service = new ChatBoxAIService(builderProvider, affiliateProductService);
+
+        String answer = service.chatOnce("ban co san pham dan mun nao goi y minh k", "user-1", "");
+
+        assertThat(answer).contains("HI_PRODUCT|name=Acne+Patch");
+        assertThat(answer).contains("price=59000");
+        assertThat(answer).contains("shopee.vn");
+    }
 
     @Test
     @SuppressWarnings("unchecked")
