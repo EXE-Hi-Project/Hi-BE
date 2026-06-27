@@ -9,7 +9,9 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @Order(50)
@@ -37,6 +39,7 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
         if (!enabled || (migrationEnabled && migrationDryRun)) {
             return;
         }
+        correctLegacyNames();
         for (SeedItem item : defaultItems()) {
             repository.findByNameIgnoreCase(item.name()).ifPresentOrElse(dictionary -> {
                 if (!item.category().equals(dictionary.getCategory()) || !Boolean.TRUE.equals(dictionary.getActive())) {
@@ -54,12 +57,71 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
                 repository.save(dictionary);
             });
         }
-        repository.findByNameIgnoreCase("Tâm trạng thay đổi").ifPresent(dictionary -> {
-            if (Boolean.TRUE.equals(dictionary.getActive())) {
-                dictionary.setActive(false);
-                repository.save(dictionary);
-            }
-        });
+        deactivateDeprecatedMood();
+    }
+
+    private void correctLegacyNames() {
+        legacyNameCorrections().forEach((legacyName, canonicalName) ->
+                repository.findByNameIgnoreCase(legacyName).ifPresent(legacy ->
+                        repository.findByNameIgnoreCase(canonicalName).ifPresentOrElse(canonical -> {
+                            if (!canonical.getId().equals(legacy.getId()) && Boolean.TRUE.equals(legacy.getActive())) {
+                                legacy.setActive(false);
+                                repository.save(legacy);
+                            }
+                        }, () -> {
+                            legacy.setName(canonicalName);
+                            legacy.setActive(true);
+                            repository.save(legacy);
+                        })));
+    }
+
+    private void deactivateDeprecatedMood() {
+        for (String name : List.of("Tâm trạng thay đổi", "TÃ¢m tráº¡ng thay Ä‘á»•i")) {
+            repository.findByNameIgnoreCase(name).ifPresent(dictionary -> {
+                if (Boolean.TRUE.equals(dictionary.getActive())) {
+                    dictionary.setActive(false);
+                    repository.save(dictionary);
+                }
+            });
+        }
+    }
+
+    private static Map<String, String> legacyNameCorrections() {
+        Map<String, String> corrections = new LinkedHashMap<>();
+        corrections.put("Äau bá»¥ng", "Đau bụng");
+        corrections.put("Äau Ä‘áº§u", "Đau đầu");
+        corrections.put("Má»‡t má»i", "Mệt mỏi");
+        corrections.put("Ná»•i má»¥n", "Nổi mụn");
+        corrections.put("Äau lÆ°ng", "Đau lưng");
+        corrections.put("Ngá»±c Ä‘au", "Ngực đau");
+        corrections.put("Máº¥t ngá»§", "Mất ngủ");
+        corrections.put("ChÃ³ng máº·t", "Chóng mặt");
+        corrections.put("ThÃ¨m Äƒn", "Thèm ăn");
+        corrections.put("Ngá»©a Ã¢m Ä‘áº¡o", "Ngứa âm đạo");
+        corrections.put("KhÃ´ Ã¢m Ä‘áº¡o", "Khô âm đạo");
+        corrections.put("BÃ¬nh tÄ©nh", "Bình tĩnh");
+        corrections.put("Vui váº»", "Vui vẻ");
+        corrections.put("Máº¡nh máº½", "Mạnh mẽ");
+        corrections.put("Pháº¥n cháº¥n", "Phấn chấn");
+        corrections.put("Tháº¥t thÆ°á»ng", "Thất thường");
+        corrections.put("Bá»±c bá»™i", "Bực bội");
+        corrections.put("Buá»“n", "Buồn");
+        corrections.put("Lo láº¯ng", "Lo lắng");
+        corrections.put("Thiáº¿u nÄƒng lÆ°á»£ng", "Thiếu năng lượng");
+        corrections.put("Buá»“n nÃ´n", "Buồn nôn");
+        corrections.put("Äáº§y hÆ¡i", "Đầy hơi");
+        corrections.put("TÃ¡o bÃ³n", "Táo bón");
+        corrections.put("TiÃªu cháº£y", "Tiêu chảy");
+        corrections.put("KhÃ´ng cÃ³ dá»‹ch", "Không có dịch");
+        corrections.put("Tráº¯ng Ä‘á»¥c", "Trắng đục");
+        corrections.put("áº¨m Æ°á»›t", "Ẩm ướt");
+        corrections.put("Dáº¡ng dÃ­nh", "Dạng dính");
+        corrections.put("NhÆ° lÃ²ng tráº¯ng trá»©ng", "Như lòng trắng trứng");
+        corrections.put("Dáº¡ng Ä‘á»‘m", "Dạng đốm");
+        corrections.put("Báº¥t thÆ°á»ng", "Bất thường");
+        corrections.put("Tráº¯ng, vÃ³n cá»¥c", "Trắng, vón cục");
+        corrections.put("XÃ¡m", "Xám");
+        return corrections;
     }
 
     public static List<SeedItem> defaultItems() {

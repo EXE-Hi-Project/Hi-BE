@@ -9,6 +9,7 @@ import com.hi.api.repository.UserRepository;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -158,30 +159,31 @@ public class CoupleQuestionService {
         User partner = partnerAccessService.requireCurrentPartner(user);
         CoupleQuestionSession session = getActiveOrCreateToday(user, partner);
         CoupleQuestionSession before = sessionRepository.findById(session.getId()).orElseThrow();
+        boolean userAlreadyAnswered = before.getAnswers() != null && before.getAnswers().containsKey(userId);
         boolean partnerAlreadyAnswered = before.getAnswers() != null && before.getAnswers().containsKey(partner.getId());
 
         Instant now = Instant.now();
         CoupleQuestionSession.Answer answer = new CoupleQuestionSession.Answer();
         answer.setUserId(userId);
         answer.setContent(content.trim());
-        answer.setAnsweredAt(before.getAnswers() != null && before.getAnswers().get(userId) != null
+        answer.setAnsweredAt(userAlreadyAnswered
                 ? before.getAnswers().get(userId).getAnsweredAt()
                 : now);
         answer.setUpdatedAt(now);
 
-        Query query = Query.query(Criteria.where("_id").is(session.getId())
-                .and("participantIds").is(userId)
-                .and("unlockedAt").is(null));
+        Query query = Query.query(Criteria.where("id").is(session.getId())
+                .and("participantIds").is(userId));
         Update update = new Update()
                 .set("answers." + userId, answer)
-                .set("updatedAt", now);
+                .set("updatedAt", now)
+                .pull("skippedBy", userId);
         CoupleQuestionSession updated = mongoTemplate.findAndModify(
                 query, update, FindAndModifyOptions.options().returnNew(true), CoupleQuestionSession.class);
         if (updated == null) {
-            throw new IllegalArgumentException("Câu trả lời đã được mở khóa và không thể chỉnh sửa");
+            throw new IllegalArgumentException("Không tìm thấy câu hỏi để cập nhật");
         }
 
-        if (!partnerAlreadyAnswered) {
+        if (!userAlreadyAnswered && !partnerAlreadyAnswered) {
             notifyPartnerAnswered(partner, user, updated);
         }
         if (shouldUnlock(updated)) {
@@ -197,7 +199,7 @@ public class CoupleQuestionService {
         User partner = partnerAccessService.requireCurrentPartner(user);
         CoupleQuestionSession session = getActiveOrCreateToday(user, partner);
         mongoTemplate.updateFirst(
-                Query.query(Criteria.where("_id").is(session.getId()).and("participantIds").is(userId)),
+                Query.query(Criteria.where("id").is(session.getId()).and("participantIds").is(userId)),
                 new Update().addToSet("skippedBy", userId),
                 CoupleQuestionSession.class);
         CoupleQuestionSession updated = sessionRepository.findById(session.getId()).orElseThrow();
@@ -233,30 +235,31 @@ public class CoupleQuestionService {
         }
 
         CoupleQuestionSession before = sessionRepository.findById(session.getId()).orElseThrow();
+        boolean userAlreadyAnswered = before.getAnswers() != null && before.getAnswers().containsKey(userId);
         boolean partnerAlreadyAnswered = before.getAnswers() != null && before.getAnswers().containsKey(partner.getId());
 
         Instant now = Instant.now();
         CoupleQuestionSession.Answer answer = new CoupleQuestionSession.Answer();
         answer.setUserId(userId);
         answer.setContent(content.trim());
-        answer.setAnsweredAt(before.getAnswers() != null && before.getAnswers().get(userId) != null
+        answer.setAnsweredAt(userAlreadyAnswered
                 ? before.getAnswers().get(userId).getAnsweredAt()
                 : now);
         answer.setUpdatedAt(now);
 
-        Query query = Query.query(Criteria.where("_id").is(session.getId())
-                .and("participantIds").is(userId)
-                .and("unlockedAt").is(null));
+        Query query = Query.query(Criteria.where("id").is(session.getId())
+                .and("participantIds").is(userId));
         Update update = new Update()
                 .set("answers." + userId, answer)
-                .set("updatedAt", now);
+                .set("updatedAt", now)
+                .pull("skippedBy", userId);
         CoupleQuestionSession updated = mongoTemplate.findAndModify(
                 query, update, FindAndModifyOptions.options().returnNew(true), CoupleQuestionSession.class);
         if (updated == null) {
-            throw new IllegalArgumentException("Câu trả lời đã được mở khóa và không thể chỉnh sửa");
+            throw new IllegalArgumentException("Không tìm thấy câu hỏi để cập nhật");
         }
 
-        if (!partnerAlreadyAnswered) {
+        if (!userAlreadyAnswered && !partnerAlreadyAnswered) {
             notifyPartnerAnswered(partner, user, updated);
         }
         if (shouldUnlock(updated)) {
@@ -271,13 +274,29 @@ public class CoupleQuestionService {
     }
 
     public Map<String, Object> history(String userId, int page, int limit) {
+        return history(userId, page, limit, null, null);
+    }
+
+    public Map<String, Object> history(String userId, int page, int limit, LocalDate from, LocalDate to) {
         User user = partnerAccessService.requireUser(userId);
         User partner = partnerAccessService.requireCurrentPartner(user);
         subscriptionAccessService.requireCouplePremium(user, partner);
-        int safeLimit = Math.max(1, Math.min(limit, 31));
-        Page<CoupleQuestionSession> result = sessionRepository
-                .findByParticipantIdsContainingOrderByQuestionDateDesc(userId, PageRequest.of(Math.max(0, page), safeLimit));
-        List<Map<String, Object>> items = result.getContent().stream()
+        int safePage = Math.max(0, page);
+        int safeLimit = Math.max(1, Math.min(limit, 62));
+        LocalDate safeFrom = from;
+        LocalDate safeTo = to;
+        if (safeFrom != null && safeTo != null && safeFrom.isAfter(safeTo)) {
+            safeFrom = to;
+            safeTo = from;
+        }
+
+        Query query = Query.query(historyCriteria(userId, safeFrom, safeTo))
+                .with(Sort.by(Sort.Order.desc("questionDate")))
+                .skip((long) safePage * safeLimit)
+                .limit(safeLimit);
+        List<CoupleQuestionSession> sessions = mongoTemplate.find(query, CoupleQuestionSession.class);
+        long total = mongoTemplate.count(Query.query(historyCriteria(userId, safeFrom, safeTo)), CoupleQuestionSession.class);
+        List<Map<String, Object>> items = sessions.stream()
                 .map(session -> {
                     String otherId = session.getParticipantIds().stream().filter(id -> !id.equals(userId)).findFirst().orElse(null);
                     return sessionResponse(session, userId, partnerAccessService.isActivePair(userId, otherId));
@@ -285,11 +304,23 @@ public class CoupleQuestionService {
                 .toList();
         return Map.of(
                 "items", items,
-                "page", result.getNumber(),
-                "limit", result.getSize(),
-                "total", result.getTotalElements(),
-                "hasMore", result.hasNext()
+                "page", safePage,
+                "limit", safeLimit,
+                "total", total,
+                "hasMore", ((long) (safePage + 1) * safeLimit) < total
         );
+    }
+
+    private Criteria historyCriteria(String userId, LocalDate from, LocalDate to) {
+        Criteria criteria = Criteria.where("participantIds").is(userId);
+        if (from != null && to != null) {
+            criteria = criteria.and("questionDate").gte(from).lte(to);
+        } else if (from != null) {
+            criteria = criteria.and("questionDate").gte(from);
+        } else if (to != null) {
+            criteria = criteria.and("questionDate").lte(to);
+        }
+        return criteria;
     }
 
     public Map<String, Object> addMessage(String userId, String sessionId, String content) {
@@ -310,7 +341,7 @@ public class CoupleQuestionService {
         message.setContent(content.trim());
         message.setCreatedAt(Instant.now());
         mongoTemplate.updateFirst(
-                Query.query(Criteria.where("_id").is(sessionId).and("unlockedAt").ne(null)),
+                Query.query(Criteria.where("id").is(sessionId).and("unlockedAt").ne(null)),
                 new Update().push("messages", message),
                 CoupleQuestionSession.class);
         CoupleQuestionSession updated = sessionRepository.findById(sessionId).orElseThrow();
@@ -326,7 +357,7 @@ public class CoupleQuestionService {
 
     private void unlock(CoupleQuestionSession session) {
         CoupleQuestionSession unlocked = mongoTemplate.findAndModify(
-                Query.query(Criteria.where("_id").is(session.getId()).and("unlockedAt").is(null)),
+                Query.query(Criteria.where("id").is(session.getId()).and("unlockedAt").is(null)),
                 new Update().set("unlockedAt", Instant.now()),
                 FindAndModifyOptions.options().returnNew(true),
                 CoupleQuestionSession.class);
@@ -418,7 +449,6 @@ public class CoupleQuestionService {
 
     private String status(CoupleQuestionSession session, String userId) {
         if (session.getUnlockedAt() != null) return "UNLOCKED";
-        if (session.getSkippedBy() != null && session.getSkippedBy().contains(userId)) return "SKIPPED";
         if (session.getAnswers() != null && session.getAnswers().containsKey(userId)) return "WAITING_PARTNER";
         return "UNANSWERED";
     }

@@ -63,7 +63,10 @@ class SymptomDictionarySeederTest {
             SymptomDictionarySeeder.SeedItem item = SymptomDictionarySeeder.defaultItems().stream()
                     .filter(candidate -> candidate.name().equals(name))
                     .findFirst()
-                    .orElseThrow();
+                    .orElse(null);
+            if (item == null) {
+                return Optional.empty();
+            }
             SymptomDictionary dictionary = new SymptomDictionary();
             dictionary.setName(item.name());
             dictionary.setCategory(item.category());

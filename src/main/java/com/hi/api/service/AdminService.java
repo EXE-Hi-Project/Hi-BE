@@ -4,6 +4,8 @@ import com.hi.api.model.AdminAuditLog;
 import com.hi.api.model.AffiliateRevenueEvent;
 import com.hi.api.model.User;
 import com.hi.api.model.Transaction;
+import com.hi.api.model.AiCostLog;
+import com.hi.api.dto.request.UpsertAiCostRequest;
 import com.hi.api.repository.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.mongodb.core.MongoTemplate;
@@ -33,6 +35,7 @@ public class AdminService {
     private final MongoTemplate mongoTemplate;
     private final NotificationService notificationService;
     private final RealtimeEventService realtimeEventService;
+    private final AiCostLogRepository aiCostLogRepository;
 
     @Value("${FINANCE_PAID_USER_RATE:0.15}")
     private double paidUserRate;
@@ -60,7 +63,8 @@ public class AdminService {
                         ChatRepository chatRepository, AdminAuditLogRepository auditLogRepository,
                         TransactionRepository transactionRepository, MongoTemplate mongoTemplate,
                         NotificationService notificationService,
-                        RealtimeEventService realtimeEventService) {
+                        RealtimeEventService realtimeEventService,
+                        AiCostLogRepository aiCostLogRepository) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogSymptomRepository = dailyLogSymptomRepository;
@@ -71,6 +75,7 @@ public class AdminService {
         this.mongoTemplate = mongoTemplate;
         this.notificationService = notificationService;
         this.realtimeEventService = realtimeEventService;
+        this.aiCostLogRepository = aiCostLogRepository;
     }
 
     private record MonthInfo(int year, int month, String key, String label, Instant startDate) {}
@@ -115,6 +120,13 @@ public class AdminService {
         double estimatedConversations = chatMessagesTotal / avgMessagesPerConversation;
         double estimatedAiTokensMonthly = estimatedConversations * avgTokensPerConversation;
         double estimatedAiCostMonthlyUsd = (estimatedAiTokensMonthly / 1000) * aiCostPer1kTokens;
+
+        String currentMonthKey = LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM"));
+        Optional<AiCostLog> currentMonthLog = aiCostLogRepository.findByMonth(currentMonthKey);
+        if (currentMonthLog.isPresent()) {
+            estimatedAiCostMonthlyUsd = currentMonthLog.get().getCostUsd();
+        }
+
         long estimatedPaidUsers = Math.round(usersTotal * paidUserRate);
         double estimatedMrrUsd = estimatedPaidUsers * arpuUsd;
         double estimatedGrossProfitUsd = estimatedMrrUsd - estimatedAiCostMonthlyUsd - infraCostUsd;
@@ -128,13 +140,27 @@ public class AdminService {
             long newPaidUsers = Math.round(newUsers * paidUserRate);
             double revenueUsdM = newPaidUsers * arpuUsd;
             double conversations = chatMessages / avgMessagesPerConversation;
-            double aiCostUsdM = (conversations * avgTokensPerConversation / 1000) * aiCostPer1kTokens;
+            Optional<AiCostLog> actualLog = aiCostLogRepository.findByMonth(m.key());
+            double aiCostUsdM;
+            Long actualTokens = null;
+            boolean isActual = false;
+
+            if (actualLog.isPresent()) {
+                aiCostUsdM = actualLog.get().getCostUsd();
+                actualTokens = actualLog.get().getTotalTokens();
+                isActual = true;
+            } else {
+                aiCostUsdM = (conversations * avgTokensPerConversation / 1000) * aiCostPer1kTokens;
+            }
+
             Map<String, Object> mf = new LinkedHashMap<>();
             mf.put("month", m.label());
             mf.put("newUsers", newUsers);
             mf.put("chatMessages", chatMessages);
             mf.put("revenueUsd", round2(revenueUsdM));
             mf.put("aiCostUsd", round2(aiCostUsdM));
+            mf.put("actualTokens", actualTokens);
+            mf.put("isActual", isActual);
             mf.put("netUsd", round2(revenueUsdM - aiCostUsdM));
             return mf;
         }).toList();
@@ -621,5 +647,31 @@ public class AdminService {
 
     private double round2(double value) {
         return Math.round(value * 100.0) / 100.0;
+    }
+
+    public List<AiCostLog> getAiCostLogs() {
+        return aiCostLogRepository.findAll(Sort.by(Sort.Direction.DESC, "month"));
+    }
+
+    public AiCostLog saveAiCostLog(UpsertAiCostRequest req) {
+        AiCostLog log = aiCostLogRepository.findByMonth(req.getMonth())
+                .orElseGet(() -> {
+                    AiCostLog newLog = new AiCostLog();
+                    newLog.setMonth(req.getMonth());
+                    return newLog;
+                });
+        log.setInputTokens(req.getInputTokens() != null ? req.getInputTokens() : 0L);
+        log.setOutputTokens(req.getOutputTokens() != null ? req.getOutputTokens() : 0L);
+        long total = req.getTotalTokens() != null ? req.getTotalTokens() :
+                (log.getInputTokens() + log.getOutputTokens());
+        log.setTotalTokens(total);
+        log.setCostUsd(req.getCostUsd());
+        log.setNotes(req.getNotes() != null ? req.getNotes() : "");
+        log.setCreatedAt(Instant.now());
+        return aiCostLogRepository.save(log);
+    }
+
+    public void deleteAiCostLog(String month) {
+        aiCostLogRepository.findByMonth(month).ifPresent(aiCostLogRepository::delete);
     }
 }
