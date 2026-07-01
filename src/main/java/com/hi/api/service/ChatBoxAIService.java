@@ -1,5 +1,6 @@
 package com.hi.api.service;
 
+import com.hi.api.model.AffiliateProduct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -7,11 +8,16 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.math.BigDecimal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class ChatBoxAIService {
@@ -19,10 +25,18 @@ public class ChatBoxAIService {
     private static final Logger log = LoggerFactory.getLogger(ChatBoxAIService.class);
 
     private final ChatClient chatClient;
+    private final AffiliateProductService affiliateProductService;
 
     public ChatBoxAIService(ObjectProvider<ChatClient.Builder> builderProvider) {
+        this(builderProvider, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ChatBoxAIService(ObjectProvider<ChatClient.Builder> builderProvider,
+                            AffiliateProductService affiliateProductService) {
         ChatClient.Builder builder = builderProvider.getIfAvailable();
         this.chatClient = builder != null ? builder.build() : null;
+        this.affiliateProductService = affiliateProductService;
     }
 
     public String chatOnce(String userInput, String userId, String userContext) {
@@ -143,6 +157,16 @@ public class ChatBoxAIService {
     private String quickAnswer(String userInput, String userContext) {
         String normalized = normalize(userInput);
 
+        String productAnswer = productQuickAnswer(userInput, normalized);
+        if (!productAnswer.isBlank()) {
+            return productAnswer;
+        }
+
+        String recentCyclesAnswer = recentCyclesAnswer(userInput, normalized, userContext);
+        if (!recentCyclesAnswer.isBlank()) {
+            return recentCyclesAnswer;
+        }
+
         if (containsAny(normalized, "tinh nang", "hi la gi", "goi hi", "cac goi", "premium", "free", "gia goi")) {
             return """
                     Hi có thể giúp bạn theo dõi sức khỏe sinh sản theo cách nhẹ nhàng và cá nhân hóa hơn nè:
@@ -233,6 +257,160 @@ public class ChatBoxAIService {
         }
 
         return "";
+    }
+
+    private String productQuickAnswer(String userInput, String normalizedInput) {
+        if (affiliateProductService == null || !isProductIntent(normalizedInput)) {
+            return "";
+        }
+
+        List<AffiliateProduct> products = affiliateProductService.searchProductsByUserKeywords(userInput, 6);
+        if (products.isEmpty()) {
+            return """
+                    Mình chưa tìm thấy sản phẩm đã duyệt khớp rõ với nội dung bạn vừa nhập.
+
+                    Bạn thử ghi cụ thể hơn như "dán mụn", "túi chườm đau bụng kinh", "dung dịch vệ sinh" hoặc tên sản phẩm/shop nhé. Hi sẽ ưu tiên gợi ý từ danh sách sản phẩm đã duyệt để tránh gửi nhầm link.
+                    """;
+        }
+
+        String cards = products.stream()
+                .limit(3)
+                .map(this::productCardLine)
+                .reduce("", (left, right) -> left + right + "\n")
+                .strip();
+        if (cards.isBlank()) {
+            return "";
+        }
+
+        String careNote = containsAny(normalizedInput, "mun", "acne", "pimple")
+                ? """
+                Với mụn, bạn ưu tiên làm sạch da nhẹ nhàng, không nặn mụn và dán trên vùng da khô sạch. Nếu mụn viêm lan rộng, đau nhiều hoặc để lại sẹo nhanh, bạn nên hỏi bác sĩ da liễu nhé.
+                """
+                : """
+                Mình gợi ý theo từ khóa bạn nhập và chỉ xem đây là hỗ trợ thêm. Nếu đang có triệu chứng nặng, kéo dài hoặc diễn tiến nhanh, bạn nên ưu tiên tư vấn y tế trước nhé.
+                """;
+
+        return careNote.strip()
+                + "\n\nSản phẩm phù hợp:\n"
+                + cards;
+    }
+
+    private boolean isProductIntent(String normalizedInput) {
+        boolean directProductAsk = containsAny(normalizedInput,
+                "san pham", "goi y mua", "mua gi", "mua o dau", "link", "shop", "dat hang",
+                "nen mua", "nen dung loai", "loai nao", "co loai nao", "goi y minh", "can mua", "can tim");
+        boolean productKeyword = containsAny(normalizedInput,
+                "dan mun", "mieng dan mun", "kem mun", "serum mun", "tui chuom", "mieng dan nhiet",
+                "tra gung", "dung dich ve sinh", "coc nguyet san", "bang ve sinh", "dau bung kinh can",
+                "mun", "acne", "pimple");
+        return directProductAsk || productKeyword;
+    }
+
+    private String recentCyclesAnswer(String userInput, String normalizedInput, String userContext) {
+        if (!isRecentCyclesIntent(normalizedInput)) {
+            return "";
+        }
+        String cyclesLine = extractLine(userContext, "- Các kỳ gần đây:");
+        if (cyclesLine.isBlank()) {
+            cyclesLine = extractLine(userContext, "- CÃ¡c ká»³ gáº§n Ä‘Ã¢y:");
+        }
+        List<String> cycles = parseCycleRanges(cyclesLine);
+        if (cycles.isEmpty()) {
+            String latestLine = extractLine(userContext, "- Kỳ gần nhất:");
+            if (latestLine.isBlank()) {
+                latestLine = extractLine(userContext, "- Ká»³ gáº§n nháº¥t:");
+            }
+            if (!latestLine.isBlank() && !normalize(latestLine).contains("chua co")) {
+                cycles = List.of(cleanLabel(latestLine.replaceFirst("^-\\s*Kỳ gần nhất:\\s*", "")
+                        .replaceFirst("^-\\s*Ká»³ gáº§n nháº¥t:\\s*", "")));
+            }
+        }
+        if (cycles.isEmpty()) {
+            return """
+                    Mình chưa thấy kỳ đã xác nhận trong dữ liệu hiện tại.
+
+                    Bạn có thể vào phần lịch sử chu kỳ để thêm các kỳ đã ghi nhận. Khi có dữ liệu, Hi sẽ trả lời được các kỳ gần nhất chính xác hơn.
+                    """;
+        }
+
+        int requestedCount = requestedCycleCount(userInput, normalizedInput);
+        List<String> selectedCycles = cycles.stream()
+                .filter(item -> !item.isBlank())
+                .limit(Math.min(requestedCount, cycles.size()))
+                .toList();
+        StringBuilder answer = new StringBuilder("Mình thấy ")
+                .append(selectedCycles.size())
+                .append(" chu kỳ gần nhất đã ghi trong Hi là:\n\n");
+        for (int index = 0; index < selectedCycles.size(); index++) {
+            answer.append("- Chu kỳ ").append(index + 1).append(": ").append(selectedCycles.get(index)).append("\n");
+        }
+        answer.append("\nĐây là các kỳ đã được xác nhận trong lịch sử, khác với ngày dự đoán nha.");
+        return answer.toString();
+    }
+
+    private boolean isRecentCyclesIntent(String normalizedInput) {
+        return containsAny(normalizedInput, "chu ky gan nhat", "ky gan nhat", "chu ky gan day", "ky gan day")
+                && (normalizedInput.matches(".*\\d+\\s+(chu ky|ky).*")
+                || containsAny(normalizedInput, "cac chu ky", "nhung chu ky", "may chu ky", "danh sach"));
+    }
+
+    private int requestedCycleCount(String userInput, String normalizedInput) {
+        Matcher matcher = Pattern.compile("(\\d+)\\s*(?:chu\\s*ky|ky)").matcher(normalizedInput);
+        if (matcher.find()) {
+            try {
+                return Math.min(Math.max(Integer.parseInt(matcher.group(1)), 1), 6);
+            } catch (NumberFormatException ignored) {
+                return 3;
+            }
+        }
+        return 3;
+    }
+
+    private List<String> parseCycleRanges(String cyclesLine) {
+        if (cyclesLine == null || cyclesLine.isBlank()) {
+            return List.of();
+        }
+        String value = cyclesLine.replaceFirst("^-\\s*", "").trim();
+        int separator = value.indexOf(':');
+        if (separator >= 0 && separator + 1 < value.length()) {
+            value = value.substring(separator + 1).trim();
+        }
+        if (value.startsWith("[") && value.endsWith("]")) {
+            value = value.substring(1, value.length() - 1);
+        }
+        if (value.isBlank() || normalize(value).contains("chua co")) {
+            return List.of();
+        }
+        return Arrays.stream(value.split(",\\s*"))
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .toList();
+    }
+
+    private String productCardLine(AffiliateProduct product) {
+        String platform = product.getPlatform() != null ? product.getPlatform().name() : "";
+        return "HI_PRODUCT"
+                + "|name=" + encoded(value(product.getName(), "Sản phẩm chăm sóc"))
+                + "|platform=" + encoded(platform)
+                + "|shop=" + encoded(product.getSourceName())
+                + "|category=" + encoded(value(product.getSymptomCategory(), value(product.getCategory(), "chăm sóc tại nhà")))
+                + "|tags=" + encoded(join(product.getSymptomTags()))
+                + "|price=" + encoded(priceText(product.getPrice()))
+                + "|image=" + encoded(product.getImageUrl())
+                + "|url=" + encoded(product.getAffiliateUrl());
+    }
+
+    private String encoded(String value) {
+        return URLEncoder.encode(value(value, ""), StandardCharsets.UTF_8);
+    }
+
+    private String priceText(BigDecimal value) {
+        if (value == null || value.compareTo(BigDecimal.ZERO) <= 0) return "";
+        return value.stripTrailingZeros().toPlainString();
+    }
+
+    private String join(List<String> values) {
+        return values == null ? "" : String.join(", ", values);
     }
 
     private String affiliateLines(String context) {
@@ -437,5 +615,9 @@ public class ChatBoxAIService {
 
     private String cleanLabel(String value) {
         return value.replaceFirst("^-\\s*", "").trim();
+    }
+
+    private String value(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 }

@@ -49,7 +49,7 @@ public class CoupleAnniversaryService {
         Pair pair = requirePair(userId);
         LocalDate today = LocalDate.now(APP_ZONE);
         if (request.getStartDate().isAfter(today)) {
-            throw new IllegalArgumentException("Ng�y bắt đầu b�n nhau kh�ng được ở tương lai");
+            throw new IllegalArgumentException("Ngày bắt đầu bên nhau không được ở tương lai");
         }
 
         CoupleAnniversary startDate = repository.findByPairKeyAndType(pair.pairKey(), CoupleAnniversary.Type.START_DATE)
@@ -60,7 +60,7 @@ public class CoupleAnniversaryService {
         if (request.getTitle() != null && !request.getTitle().isBlank()) {
             startDate.setTitle(request.getTitle().trim());
         } else {
-            startDate.setTitle("Ngy bn nhau");
+            startDate.setTitle("Ngày bên nhau");
         }
         startDate.setNote(request.getNote() == null ? "" : request.getNote().trim());
         startDate.setCreatedBy(startDate.getCreatedBy() != null ? startDate.getCreatedBy() : userId);
@@ -88,7 +88,7 @@ public class CoupleAnniversaryService {
     public Map<String, Object> updateEvent(String userId, String eventId, UpsertCoupleAnniversaryEventRequest request) {
         Pair pair = requirePair(userId);
         CoupleAnniversary event = repository.findByIdAndPairKeyAndType(eventId, pair.pairKey(), CoupleAnniversary.Type.MEMORY)
-                .orElseThrow(() -> new IllegalArgumentException("Kh�ng t�m thấy kỷ niệm"));
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy kỷ niệm"));
         applyEventFields(event, request);
         repository.save(event);
         emitUpdated(pair);
@@ -98,7 +98,7 @@ public class CoupleAnniversaryService {
     public Map<String, Object> deleteEvent(String userId, String eventId) {
         Pair pair = requirePair(userId);
         CoupleAnniversary event = repository.findByIdAndPairKeyAndType(eventId, pair.pairKey(), CoupleAnniversary.Type.MEMORY)
-                .orElseThrow(() -> new IllegalArgumentException("Kh�ng t�m thấy kỷ niệm"));
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy kỷ niệm"));
         repository.delete(event);
         emitUpdated(pair);
         return getAnniversaries(userId);
@@ -118,7 +118,7 @@ public class CoupleAnniversaryService {
         if (value == null || value.isBlank()) return fallback;
         String normalized = value.trim().toLowerCase();
         if (!allowed.contains(normalized)) {
-            throw new IllegalArgumentException("T�y chọn hiển thị kh�ng hợp lệ");
+            throw new IllegalArgumentException("Tùy chọn hiển thị không hợp lệ");
         }
         return normalized;
     }
@@ -128,7 +128,7 @@ public class CoupleAnniversaryService {
         User partner = partnerAccessService.requireCurrentPartner(user);
         String pairKey = partnerAccessService.pairKey(user.getId(), partner.getId());
         if (!partnerAccessService.isActivePair(user.getId(), partner.getId())) {
-            throw new AccessDeniedException("Li�n kết Người ấy kh�ng c�n hợp lệ");
+            throw new AccessDeniedException("Liên kết Người ấy không còn hợp lệ");
         }
         return new Pair(user, partner, pairKey);
     }
@@ -149,7 +149,7 @@ public class CoupleAnniversaryService {
 
     private Long daysTogether(CoupleAnniversary startDate) {
         if (startDate == null || startDate.getEventDate() == null) return null;
-        // T�nh ng�y theo m�i giờ Việt Nam để hai t�i khoản thấy c�ng một con số.
+        // Tính ngày theo múi giờ Việt Nam để hai tài khoản thấy cùng một con số.
         return ChronoUnit.DAYS.between(startDate.getEventDate(), LocalDate.now(APP_ZONE)) + 1;
     }
 

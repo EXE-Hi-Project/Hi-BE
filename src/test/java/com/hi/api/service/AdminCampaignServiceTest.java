@@ -98,7 +98,8 @@ class AdminCampaignServiceTest {
                 mock(TransactionRepository.class),
                 mongoTemplate,
                 notificationService,
-                mock(RealtimeEventService.class)
+                mock(RealtimeEventService.class),
+                mock(AiCostLogRepository.class)
         );
     }
 

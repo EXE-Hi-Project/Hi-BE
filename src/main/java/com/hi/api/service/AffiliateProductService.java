@@ -22,15 +22,21 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
+import java.text.Normalizer;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 public class AffiliateProductService {
+    private static final int MAX_REGEX_SEARCH_LENGTH = 80;
 
     private final AffiliateProductRepository affiliateProductRepository;
     private final AffiliateRevenueEventRepository affiliateRevenueEventRepository;
@@ -70,7 +76,7 @@ public class AffiliateProductService {
         List<Criteria> criteria = new ArrayList<>();
 
         if (q != null && !q.isBlank()) {
-            String text = q.trim();
+            String text = safeContainsRegex(q);
             criteria.add(new Criteria().orOperator(
                     Criteria.where("name").regex(text, "i"),
                     Criteria.where("description").regex(text, "i"),
@@ -80,10 +86,11 @@ public class AffiliateProductService {
         }
         if (platform != null) criteria.add(Criteria.where("platform").is(platform));
         if (symptomCategory != null && !symptomCategory.isBlank()) {
-            String text = symptomCategory.trim();
+            String exactText = safeExactRegex(symptomCategory);
+            String containsText = safeContainsRegex(symptomCategory);
             criteria.add(new Criteria().orOperator(
-                    Criteria.where("symptomCategory").regex("^" + java.util.regex.Pattern.quote(text) + "$", "i"),
-                    Criteria.where("symptomTags").regex(text, "i")
+                    Criteria.where("symptomCategory").regex(exactText, "i"),
+                    Criteria.where("symptomTags").regex(containsText, "i")
             ));
         }
         if (active != null) criteria.add(Criteria.where("isActive").is(active));
@@ -102,12 +109,47 @@ public class AffiliateProductService {
         return mongoTemplate.find(query, AffiliateProduct.class);
     }
 
+    public List<AffiliateProduct> searchProductsByUserKeywords(String rawInput, int limit) {
+        String normalizedInput = normalizeForSearch(rawInput);
+        if (normalizedInput.isBlank()) {
+            return List.of();
+        }
+
+        Set<String> tokens = keywordTokens(normalizedInput);
+        List<String> phrases = keywordPhrases(normalizedInput, tokens);
+        if (tokens.isEmpty() && phrases.isEmpty()) {
+            return List.of();
+        }
+
+        return affiliateProductRepository.findByIsActiveTrueOrderByCommissionRateDescPriceAsc()
+                .stream()
+                .map(product -> new ProductKeywordScore(product, productKeywordScore(product, normalizedInput, tokens, phrases)))
+                .filter(score -> score.score() > 0)
+                .sorted((left, right) -> {
+                    int scoreCompare = Integer.compare(right.score(), left.score());
+                    if (scoreCompare != 0) return scoreCompare;
+
+                    AffiliateProduct a = left.product();
+                    AffiliateProduct b = right.product();
+                    int priorityCompare = Integer.compare(value(b.getPriority(), 0), value(a.getPriority(), 0));
+                    if (priorityCompare != 0) return priorityCompare;
+
+                    int commissionCompare = Double.compare(value(b.getCommissionRate(), 0.0), value(a.getCommissionRate(), 0.0));
+                    if (commissionCompare != 0) return commissionCompare;
+
+                    return value(a.getName(), "").compareToIgnoreCase(value(b.getName(), ""));
+                })
+                .limit(Math.min(Math.max(limit, 1), 12))
+                .map(ProductKeywordScore::product)
+                .toList();
+    }
+
     public List<AffiliateProduct> getRecommendations(String symptomCategory, String phase, int limit) {
         Query query = new Query();
         List<Criteria> filters = new ArrayList<>();
         filters.add(Criteria.where("isActive").is(true));
         if (symptomCategory != null && !symptomCategory.isBlank()) {
-            String text = symptomCategory.trim();
+            String text = safeContainsRegex(symptomCategory);
             filters.add(new Criteria().orOperator(
                     Criteria.where("symptomCategory").regex(text, "i"),
                     Criteria.where("symptomTags").regex(text, "i"),
@@ -118,8 +160,9 @@ public class AffiliateProductService {
             ));
         }
         if (phase != null && !phase.isBlank()) {
+            String text = safeContainsRegex(phase);
             filters.add(new Criteria().orOperator(
-                    Criteria.where("phaseTags").regex(phase.trim(), "i"),
+                    Criteria.where("phaseTags").regex(text, "i"),
                     Criteria.where("phaseTags").size(0),
                     Criteria.where("phaseTags").exists(false)
             ));
@@ -129,6 +172,115 @@ public class AffiliateProductService {
         query.limit(Math.min(Math.max(limit, 1), 12));
         return mongoTemplate.find(query, AffiliateProduct.class);
     }
+
+    private int productKeywordScore(AffiliateProduct product, String normalizedInput, Set<String> tokens, List<String> phrases) {
+        String name = normalizeForSearch(product.getName());
+        String tags = normalizeForSearch(String.join(" ", safeList(product.getSymptomTags())))
+                + " " + normalizeForSearch(String.join(" ", safeList(product.getPhaseTags())))
+                + " " + normalizeForSearch(String.join(" ", safeList(product.getGoalTags())));
+        String category = normalizeForSearch(value(product.getSymptomCategory(), "") + " " + value(product.getCategory(), ""));
+        String all = String.join(" ",
+                name,
+                normalizeForSearch(product.getDescription()),
+                category,
+                tags,
+                normalizeForSearch(product.getSourceName())
+        );
+
+        int score = 0;
+        if (normalizedInput.length() >= 4 && all.contains(normalizedInput)) {
+            score += 28;
+        }
+        for (String phrase : phrases) {
+            if (phrase.length() < 3) continue;
+            if (name.contains(phrase)) score += 26;
+            if (tags.contains(phrase)) score += 18;
+            if (category.contains(phrase)) score += 14;
+            if (all.contains(phrase)) score += 8;
+        }
+        for (String token : tokens) {
+            if (token.length() < 2) continue;
+            if (name.contains(token)) score += 12;
+            if (tags.contains(token)) score += 8;
+            if (category.contains(token)) score += 6;
+            if (all.contains(token)) score += 3;
+        }
+        return score;
+    }
+
+    private List<String> keywordPhrases(String normalizedInput, Set<String> tokens) {
+        Set<String> phrases = new HashSet<>();
+        if (normalizedInput.length() >= 4) {
+            phrases.add(normalizedInput);
+        }
+        if (normalizedInput.contains("dan mun") || tokens.contains("mun")) {
+            phrases.addAll(List.of("dan mun", "mieng dan mun", "tri mun", "mun", "acne", "pimple"));
+        }
+        if (normalizedInput.contains("dau bung") || normalizedInput.contains("dau lung") || normalizedInput.contains("bung kinh")) {
+            phrases.addAll(List.of("dau bung", "dau bung kinh", "tui chuom", "mieng dan nhiet", "tra gung", "kinh nguyet"));
+        }
+        if (normalizedInput.contains("buon non") || normalizedInput.contains("met moi")) {
+            phrases.addAll(List.of("buon non", "met moi", "tra gung", "vitamin", "dien giai"));
+        }
+        if (normalizedInput.contains("ngua") || normalizedInput.contains("viem") || normalizedInput.contains("khi hu")) {
+            phrases.addAll(List.of("ve sinh", "dung dich ve sinh", "khi hu", "viem nhiem", "ngua"));
+        }
+        return phrases.stream().filter(phrase -> !phrase.isBlank()).toList();
+    }
+
+    private Set<String> keywordTokens(String normalizedInput) {
+        Set<String> stopWords = Set.of(
+                "ban", "co", "cua", "cho", "minh", "toi", "tui", "em", "anh", "chi",
+                "san", "pham", "goi", "y", "goi y", "nao", "khong", "ko", "k", "kh",
+                "mua", "gi", "loai", "can", "tim", "duoc", "duoc khong", "voi", "nha",
+                "la", "ve", "de", "ho tro", "nen", "dung", "xai", "thu"
+        );
+        return Arrays.stream(normalizedInput.split("[^a-z0-9]+"))
+                .map(String::trim)
+                .filter(token -> token.length() >= 2)
+                .filter(token -> !stopWords.contains(token))
+                .collect(java.util.stream.Collectors.toCollection(HashSet::new));
+    }
+
+    private String normalizeForSearch(String value) {
+        if (value == null) return "";
+        String noAccent = Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
+        return noAccent
+                .replace('đ', 'd')
+                .replace('Đ', 'D')
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private String safeContainsRegex(String value) {
+        return Pattern.quote(limitRegexSearch(value));
+    }
+
+    private String safeExactRegex(String value) {
+        return "^" + Pattern.quote(limitRegexSearch(value)) + "$";
+    }
+
+    private String limitRegexSearch(String value) {
+        String text = value == null ? "" : value.trim();
+        return text.length() <= MAX_REGEX_SEARCH_LENGTH ? text : text.substring(0, MAX_REGEX_SEARCH_LENGTH);
+    }
+
+    private List<String> safeList(List<String> values) {
+        return values == null ? List.of() : values;
+    }
+
+    private Integer value(Integer value, Integer fallback) {
+        return value != null ? value : fallback;
+    }
+
+    private Double value(Double value, Double fallback) {
+        return value != null ? value : fallback;
+    }
+
+    private record ProductKeywordScore(AffiliateProduct product, int score) {}
 
     public Map<String, Object> previewLink(String rawUrl) {
         String normalizedUrl = affiliateUrlPolicy.normalizeAndValidate(rawUrl);
