@@ -4,7 +4,9 @@ import com.hi.api.dto.request.UpdateRoleRequest;
 import com.hi.api.dto.request.UpdateAccountStatusRequest;
 import com.hi.api.dto.request.AdminUserNotificationRequest;
 import com.hi.api.dto.request.AdminCampaignRequest;
+import com.hi.api.dto.request.UpsertAiCostRequest;
 import com.hi.api.model.User;
+import com.hi.api.model.AiCostLog;
 import com.hi.api.service.AdminService;
 import com.hi.api.service.ReminderService;
 import com.hi.api.service.AnalyticsService;
@@ -186,5 +188,32 @@ public class AdminController {
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"users_report.csv\"")
                 .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
                 .body(csvData);
+    }
+
+    @GetMapping("/ai-costs")
+    public ResponseEntity<Map<String, Object>> getAiCostLogs() {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "data", adminService.getAiCostLogs()
+        ));
+    }
+
+    @PostMapping("/ai-costs")
+    public ResponseEntity<Map<String, Object>> saveAiCostLog(@Valid @RequestBody UpsertAiCostRequest req) {
+        AiCostLog log = adminService.saveAiCostLog(req);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Đã ghi nhận chi phí AI",
+                "data", log
+        ));
+    }
+
+    @DeleteMapping("/ai-costs/{month}")
+    public ResponseEntity<Map<String, Object>> deleteAiCostLog(@PathVariable String month) {
+        adminService.deleteAiCostLog(month);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Đã xóa ghi nhận chi phí AI cho tháng " + month
+        ));
     }
 }

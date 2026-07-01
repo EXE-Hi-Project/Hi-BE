@@ -8,6 +8,8 @@ import com.hi.api.service.CoupleQuestionService;
 import com.hi.api.service.PartnerCareSuggestionService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/partner")
@@ -50,15 +53,20 @@ public class PartnerExperienceController {
 
     @PostMapping("/questions/today/skip")
     public ResponseEntity<Map<String, Object>> skip(@AuthenticationPrincipal User user) {
-        return ok("question", questionService.skipToday(user.getId()));
+        return ResponseEntity.status(HttpStatus.GONE).body(Map.of(
+                "success", false,
+                "message", "Tính năng bỏ qua câu hỏi đã được tắt"
+        ));
     }
 
     @GetMapping("/questions/history")
     public ResponseEntity<Map<String, Object>> history(
             @AuthenticationPrincipal User user,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "31") int limit) {
-        return ok("history", questionService.history(user.getId(), page, limit));
+            @RequestParam(defaultValue = "31") int limit,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return ok("history", questionService.history(user.getId(), page, limit, from, to));
     }
 
     @GetMapping("/questions/{sessionId}")

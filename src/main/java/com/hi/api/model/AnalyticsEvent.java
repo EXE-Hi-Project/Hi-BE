@@ -5,6 +5,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
+import org.springframework.data.mongodb.core.index.CompoundIndexes;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -14,6 +16,11 @@ import java.util.Map;
 @Data
 @NoArgsConstructor
 @Document(collection = "analytics_events")
+@CompoundIndexes({
+        @CompoundIndex(name = "idx_analytics_event_created", def = "{'eventType': 1, 'createdAt': -1}"),
+        @CompoundIndex(name = "idx_analytics_event_target_created", def = "{'eventType': 1, 'target': 1, 'createdAt': -1}"),
+        @CompoundIndex(name = "idx_analytics_session_created", def = "{'sessionId': 1, 'createdAt': -1}")
+})
 public class AnalyticsEvent {
 
     @Id
