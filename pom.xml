@@ -212,6 +212,17 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes>
+                    <exclude>application-local.properties</exclude>
+                    <exclude>.env</exclude>
+                    <exclude>.env.*</exclude>
+                </excludes>
+            </resource>
+        </resources>
+
         <plugins>
 
             <plugin>

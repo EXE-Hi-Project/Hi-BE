@@ -15,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.web.bind.annotation.*;
 import com.hi.api.dto.request.ForgotPasswordRequest;
 import com.hi.api.dto.request.ResetPasswordRequest;
@@ -31,7 +32,7 @@ public class AuthController {
     private final AuthService authService;
     private final AuthRateLimitService authRateLimitService;
 
-    @Value("${app.auth.cookie.secure:false}")
+    @Value("${app.auth.cookie.secure:true}")
     private boolean secureAuthCookie;
 
     @Value("${app.jwt.expiration-ms}")
@@ -43,7 +44,9 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<Map<String, Object>> register(@Valid @RequestBody RegisterRequest req) {
+    public ResponseEntity<Map<String, Object>> register(@Valid @RequestBody RegisterRequest req,
+                                                        HttpServletRequest request) {
+        authRateLimitService.check("register", req.getEmail(), clientIp(request), 5, 15);
         Map<String, Object> payload = authService.register(req);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
@@ -53,13 +56,27 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<Map<String, Object>> login(@Valid @RequestBody LoginRequest req) {
+    public ResponseEntity<Map<String, Object>> login(@Valid @RequestBody LoginRequest req,
+                                                     HttpServletRequest request) {
+        authRateLimitService.check("login", req.getEmail(), clientIp(request), 5, 15);
         Map<String, Object> payload = authService.login(req);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
         response.put("message", "Đăng nhập thành công");
         response.put("data", payload);
         return withAuthCookie(response, payload);
+    }
+
+    @GetMapping("/csrf")
+    public ResponseEntity<Map<String, Object>> csrf(CsrfToken csrfToken) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", true);
+        response.put("message", "CSRF token created");
+        response.put("data", Map.of(
+                "csrfToken", csrfToken.getToken(),
+                "headerName", csrfToken.getHeaderName()
+        ));
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/me")

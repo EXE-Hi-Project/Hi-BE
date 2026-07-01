@@ -32,9 +32,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 public class AffiliateProductService {
+    private static final int MAX_REGEX_SEARCH_LENGTH = 80;
 
     private final AffiliateProductRepository affiliateProductRepository;
     private final AffiliateRevenueEventRepository affiliateRevenueEventRepository;
@@ -74,7 +76,7 @@ public class AffiliateProductService {
         List<Criteria> criteria = new ArrayList<>();
 
         if (q != null && !q.isBlank()) {
-            String text = q.trim();
+            String text = safeContainsRegex(q);
             criteria.add(new Criteria().orOperator(
                     Criteria.where("name").regex(text, "i"),
                     Criteria.where("description").regex(text, "i"),
@@ -84,10 +86,11 @@ public class AffiliateProductService {
         }
         if (platform != null) criteria.add(Criteria.where("platform").is(platform));
         if (symptomCategory != null && !symptomCategory.isBlank()) {
-            String text = symptomCategory.trim();
+            String exactText = safeExactRegex(symptomCategory);
+            String containsText = safeContainsRegex(symptomCategory);
             criteria.add(new Criteria().orOperator(
-                    Criteria.where("symptomCategory").regex("^" + java.util.regex.Pattern.quote(text) + "$", "i"),
-                    Criteria.where("symptomTags").regex(text, "i")
+                    Criteria.where("symptomCategory").regex(exactText, "i"),
+                    Criteria.where("symptomTags").regex(containsText, "i")
             ));
         }
         if (active != null) criteria.add(Criteria.where("isActive").is(active));
@@ -146,7 +149,7 @@ public class AffiliateProductService {
         List<Criteria> filters = new ArrayList<>();
         filters.add(Criteria.where("isActive").is(true));
         if (symptomCategory != null && !symptomCategory.isBlank()) {
-            String text = symptomCategory.trim();
+            String text = safeContainsRegex(symptomCategory);
             filters.add(new Criteria().orOperator(
                     Criteria.where("symptomCategory").regex(text, "i"),
                     Criteria.where("symptomTags").regex(text, "i"),
@@ -157,8 +160,9 @@ public class AffiliateProductService {
             ));
         }
         if (phase != null && !phase.isBlank()) {
+            String text = safeContainsRegex(phase);
             filters.add(new Criteria().orOperator(
-                    Criteria.where("phaseTags").regex(phase.trim(), "i"),
+                    Criteria.where("phaseTags").regex(text, "i"),
                     Criteria.where("phaseTags").size(0),
                     Criteria.where("phaseTags").exists(false)
             ));
@@ -249,6 +253,19 @@ public class AffiliateProductService {
                 .replaceAll("[^a-z0-9]+", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
+    }
+
+    private String safeContainsRegex(String value) {
+        return Pattern.quote(limitRegexSearch(value));
+    }
+
+    private String safeExactRegex(String value) {
+        return "^" + Pattern.quote(limitRegexSearch(value)) + "$";
+    }
+
+    private String limitRegexSearch(String value) {
+        String text = value == null ? "" : value.trim();
+        return text.length() <= MAX_REGEX_SEARCH_LENGTH ? text : text.substring(0, MAX_REGEX_SEARCH_LENGTH);
     }
 
     private List<String> safeList(List<String> values) {

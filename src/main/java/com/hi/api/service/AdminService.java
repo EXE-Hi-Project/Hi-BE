@@ -21,9 +21,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.*;
+import java.util.regex.Pattern;
 
 @Service
 public class AdminService {
+    private static final int MAX_USER_SEARCH_LENGTH = 80;
 
     private final UserRepository userRepository;
     private final CycleRecordRepository cycleRecordRepository;
@@ -349,9 +351,10 @@ public class AdminService {
         List<Criteria> criteriaList = new ArrayList<>();
 
         if (q != null && !q.isBlank()) {
+            String safeQuery = safeContainsRegex(q);
             criteriaList.add(new Criteria().orOperator(
-                    Criteria.where("name").regex(q, "i"),
-                    Criteria.where("email").regex(q, "i")
+                    Criteria.where("name").regex(safeQuery, "i"),
+                    Criteria.where("email").regex(safeQuery, "i")
             ));
         }
         if (role != null && !role.isBlank()) criteriaList.add(Criteria.where("role").is(role));
@@ -647,6 +650,14 @@ public class AdminService {
 
     private double round2(double value) {
         return Math.round(value * 100.0) / 100.0;
+    }
+
+    private String safeContainsRegex(String value) {
+        String text = value == null ? "" : value.trim();
+        if (text.length() > MAX_USER_SEARCH_LENGTH) {
+            text = text.substring(0, MAX_USER_SEARCH_LENGTH);
+        }
+        return Pattern.quote(text);
     }
 
     public List<AiCostLog> getAiCostLogs() {
