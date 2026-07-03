@@ -179,9 +179,9 @@ public class ChatBoxAIService {
 
                     Các gói Hi:
                     - Free: đầy đủ theo dõi và lịch sử sức khỏe, dự đoán cơ bản, cảnh báo an toàn, mọi phong cách AI, email và lịch nhắc tùy chỉnh; tối đa 5 câu trả lời AI mỗi ngày.
-                    - Premium tháng: toàn bộ Free, 50 câu trả lời AI mỗi ngày, phân tích chu kỳ và triệu chứng chuyên sâu, cùng trải nghiệm cặp đôi nâng cao.
-                    - Premium năm: cùng tính năng với Premium tháng, khác thời hạn 365 ngày và mức tiết kiệm.
-                    - Chỉ cần một người có Premium để cả hai dùng câu hỏi, lịch sử hội thoại và gợi ý chăm sóc cặp đôi nâng cao.
+                    - Hi Pro: thời hạn 30 ngày, toàn bộ Free, 50 câu trả lời AI mỗi ngày, phân tích chuyên sâu và trải nghiệm cặp đôi nâng cao.
+                    - Hi Max: cùng quyền lợi Hi Pro, thời hạn 365 ngày và tiết kiệm hơn.
+                    - Chỉ cần một người có Hi Pro hoặc Hi Max để cả hai dùng câu hỏi, lịch sử hội thoại và gợi ý chăm sóc cặp đôi nâng cao.
                     """;
         }
 
@@ -538,7 +538,7 @@ public class ChatBoxAIService {
         return """
                 Hi AI đang cần cấu hình nhà cung cấp AI để trả lời sâu hơn.
 
-                Mình vẫn có thể hỗ trợ các câu hỏi cơ bản về Hi, gói Free/Premium, thông báo, video, sản phẩm hỗ trợ và dữ liệu chu kỳ đã lưu.
+                Mình vẫn có thể hỗ trợ các câu hỏi cơ bản về Hi, gói Free/Hi Pro/Hi Max, thông báo, video, sản phẩm hỗ trợ và dữ liệu chu kỳ đã lưu.
 
                 Nếu có triệu chứng nghiêm trọng, hãy liên hệ bác sĩ hoặc cơ sở y tế nhé.
                 """;

@@ -116,9 +116,9 @@ public class ChatContextService {
                 - Hi là ứng dụng theo dõi sức khỏe sinh sản cho người dùng Việt Nam, dành cho cả nữ và nam.
                 - Tính năng chính: onboarding, theo dõi chu kỳ, lịch sử chu kỳ, triệu chứng, cảm xúc, Người ấy, thông báo web, email nhắc nhở, video sức khỏe được duyệt, sản phẩm hỗ trợ tại nhà và Hi AI.
                 - Gói Free: đầy đủ theo dõi và lịch sử sức khỏe, dự đoán cơ bản, cảnh báo an toàn, mọi phong cách AI, email và lịch nhắc tùy chỉnh; tối đa 5 câu trả lời AI mỗi ngày.
-                - Premium tháng: toàn bộ Free, 50 câu trả lời AI mỗi ngày, phân tích chu kỳ và triệu chứng chuyên sâu, cùng trải nghiệm cặp đôi nâng cao.
-                - Premium năm: cùng tính năng với Premium tháng, khác thời hạn 365 ngày và mức tiết kiệm.
-                - Chỉ cần một người có Premium để cả hai dùng tính năng cặp đôi nâng cao.
+                - Hi Pro: thời hạn 30 ngày, toàn bộ Free, 50 câu trả lời AI mỗi ngày, phân tích chuyên sâu và trải nghiệm cặp đôi nâng cao.
+                - Hi Max: cùng quyền lợi Hi Pro, thời hạn 365 ngày và tiết kiệm hơn.
+                - Chỉ cần một người có Hi Pro hoặc Hi Max để cả hai dùng tính năng cặp đôi nâng cao.
                 - Video trong Hi là video YouTube công khai từ nguồn được duyệt, không tải xuống hoặc rehost.
                 - Sản phẩm hỗ trợ: Hi có thể gợi ý túi chườm, miếng dán ấm, trà gừng hoặc món chăm sóc phù hợp khi có dữ liệu sản phẩm đã duyệt.
                 - Trang trợ giúp: /help. Điều khoản: /terms. Chính sách bảo mật: /privacy.

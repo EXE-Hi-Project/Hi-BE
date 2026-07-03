@@ -4,5 +4,6 @@ public enum AffiliatePlatform {
     TIKTOK,
     SHOPEE,
     LAZADA,
+    GOTIT,
     OTHER
 }

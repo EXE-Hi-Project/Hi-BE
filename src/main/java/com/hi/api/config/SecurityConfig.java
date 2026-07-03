@@ -105,6 +105,7 @@ public class SecurityConfig {
                         "/api/auth/resend-activation",
                         "/api/auth/logout").permitAll();
                 auth.requestMatchers("/api/analytics/**").permitAll();
+                auth.requestMatchers(HttpMethod.GET, "/api/plans/pricing").permitAll();
                 auth.requestMatchers("/api/payments/webhook").permitAll();
                 if (swaggerPublic) {
                     auth.requestMatchers(SWAGGER_PATHS).permitAll();

@@ -22,6 +22,9 @@ public class NotificationSettingsRequest {
     private String aiResponseStyle;
     private Boolean dailyQuestionsEnabled;
     private Boolean contextualCareSuggestionsEnabled;
+    private Boolean coupleQuestionAnswerEmailEnabled;
+    private Boolean coupleQuestionCommentEmailEnabled;
+    private Boolean coupleQuestionEditEmailEnabled;
 
     @Min(value = 0, message = "Số ngày nhắc trước phải từ 0 đến 10")
     @Max(value = 10, message = "Số ngày nhắc trước phải từ 0 đến 10")

@@ -42,7 +42,9 @@ class PaymentServiceSecurityTest {
                 userRepository,
                 mock(TransactionRepository.class),
                 null,
-                mock(RealtimeEventService.class)
+                mock(RealtimeEventService.class),
+                mock(VoucherOrderService.class),
+                mock(PlanPricingService.class)
         );
         User user = new User();
         user.setId("user-1");
@@ -65,7 +67,9 @@ class PaymentServiceSecurityTest {
                 mock(UserRepository.class),
                 mock(TransactionRepository.class),
                 null,
-                mock(RealtimeEventService.class)
+                mock(RealtimeEventService.class),
+                mock(VoucherOrderService.class),
+                mock(PlanPricingService.class)
         );
         ReflectionTestUtils.setField(service, "clientUrl", "https://hilover.space");
         ReflectionTestUtils.setField(

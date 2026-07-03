@@ -17,6 +17,9 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.hi.api.service.EmailService;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -31,6 +34,7 @@ import java.util.UUID;
 @Service
 public class CoupleQuestionService {
 
+    private static final Logger log = LoggerFactory.getLogger(CoupleQuestionService.class);
     private static final ZoneId APP_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final CoupleQuestionSessionRepository sessionRepository;
@@ -41,6 +45,7 @@ public class CoupleQuestionService {
     private final MongoTemplate mongoTemplate;
     private final SubscriptionAccessService subscriptionAccessService;
     private final RealtimeEventService realtimeEventService;
+    private final EmailService emailService;
 
     public CoupleQuestionService(CoupleQuestionSessionRepository sessionRepository,
                                  DailyQuestionRepository questionRepository,
@@ -49,7 +54,8 @@ public class CoupleQuestionService {
                                  NotificationService notificationService,
                                  MongoTemplate mongoTemplate,
                                  SubscriptionAccessService subscriptionAccessService,
-                                 RealtimeEventService realtimeEventService) {
+                                 RealtimeEventService realtimeEventService,
+                                 EmailService emailService) {
         this.sessionRepository = sessionRepository;
         this.questionRepository = questionRepository;
         this.userRepository = userRepository;
@@ -58,6 +64,7 @@ public class CoupleQuestionService {
         this.mongoTemplate = mongoTemplate;
         this.subscriptionAccessService = subscriptionAccessService;
         this.realtimeEventService = realtimeEventService;
+        this.emailService = emailService;
     }
 
     private boolean isSessionFinished(CoupleQuestionSession session) {
@@ -191,6 +198,14 @@ public class CoupleQuestionService {
             updated = sessionRepository.findById(updated.getId()).orElse(updated);
         }
         emitQuestionUpdate(updated);
+
+        // Send email notification to partner
+        if (!userAlreadyAnswered) {
+            sendQuestionEmail(user, partner, updated, QuestionEmailEvent.ANSWER, null);
+        } else {
+            sendQuestionEmail(user, partner, updated, QuestionEmailEvent.EDIT, null);
+        }
+
         return sessionResponse(updated, userId, true);
     }
 
@@ -267,6 +282,13 @@ public class CoupleQuestionService {
             updated = sessionRepository.findById(updated.getId()).orElse(updated);
         }
         emitQuestionUpdate(updated);
+
+        // Send email notification to partner
+        if (!userAlreadyAnswered) {
+            sendQuestionEmail(user, partner, updated, QuestionEmailEvent.ANSWER, null);
+        } else {
+            sendQuestionEmail(user, partner, updated, QuestionEmailEvent.EDIT, null);
+        }
 
         String otherId = updated.getParticipantIds().stream().filter(id -> !id.equals(userId)).findFirst().orElse(null);
         boolean activePair = partnerAccessService.isActivePair(userId, otherId);
@@ -352,6 +374,9 @@ public class CoupleQuestionService {
             ));
         }
         emitQuestionUpdate(updated);
+
+        sendQuestionEmail(user, partner, updated, QuestionEmailEvent.COMMENT, message.getContent());
+
         return sessionResponse(updated, userId, true);
     }
 
@@ -445,6 +470,43 @@ public class CoupleQuestionService {
                         .toList());
         response.put("skipped", session.getSkippedBy() != null && session.getSkippedBy().contains(userId));
         return response;
+    }
+
+    private void sendQuestionEmail(User actor, User recipient, CoupleQuestionSession session,
+                                   QuestionEmailEvent eventType, String commentContent) {
+        try {
+            User.NotificationPreferences prefs = recipient.getNotificationPreferences();
+            if (prefs == null) prefs = new User.NotificationPreferences();
+            if (!Boolean.TRUE.equals(prefs.getEmailEnabled())) return;
+
+            String recipientName = recipient.getName() != null && !recipient.getName().isBlank() ? recipient.getName() : "bạn";
+            String actorName = actor.getName() != null && !actor.getName().isBlank() ? actor.getName() : "Người ấy";
+            String questionText = session.getQuestionText();
+
+            switch (eventType) {
+                case ANSWER -> {
+                    if (!Boolean.TRUE.equals(prefs.getCoupleQuestionAnswerEmailEnabled())) return;
+                    emailService.sendCoupleQuestionAnswerEmail(recipient.getEmail(), recipientName, actorName, questionText);
+                }
+                case EDIT -> {
+                    if (!Boolean.TRUE.equals(prefs.getCoupleQuestionEditEmailEnabled())) return;
+                    emailService.sendCoupleQuestionEditEmail(recipient.getEmail(), recipientName, actorName, questionText);
+                }
+                case COMMENT -> {
+                    if (!Boolean.TRUE.equals(prefs.getCoupleQuestionCommentEmailEnabled())) return;
+                    emailService.sendCoupleQuestionCommentEmail(
+                            recipient.getEmail(), recipientName, actorName, questionText, commentContent);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[COUPLE_QUESTION_EMAIL] Failed to send {} email to {}: {}", eventType, recipient.getEmail(), e.getMessage());
+        }
+    }
+
+    private enum QuestionEmailEvent {
+        ANSWER,
+        EDIT,
+        COMMENT
     }
 
     private String status(CoupleQuestionSession session, String userId) {
