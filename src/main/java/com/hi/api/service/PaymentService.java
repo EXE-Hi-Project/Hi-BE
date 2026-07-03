@@ -29,6 +29,8 @@ public class PaymentService {
     private final TransactionRepository transactionRepository;
     private final PayOS payOS;
     private final RealtimeEventService realtimeEventService;
+    private final VoucherOrderService voucherOrderService;
+    private final PlanPricingService planPricingService;
 
     @Value("${app.client-url}")
     private String clientUrl;
@@ -40,11 +42,15 @@ public class PaymentService {
             UserRepository userRepository,
             TransactionRepository transactionRepository,
             PayOS payOS,
-            RealtimeEventService realtimeEventService) {
+            RealtimeEventService realtimeEventService,
+            VoucherOrderService voucherOrderService,
+            PlanPricingService planPricingService) {
         this.userRepository = userRepository;
         this.transactionRepository = transactionRepository;
         this.payOS = payOS;
         this.realtimeEventService = realtimeEventService;
+        this.voucherOrderService = voucherOrderService;
+        this.planPricingService = planPricingService;
     }
 
     public String createCheckoutSession(User user, String priceId, String originUrl) throws Exception {
@@ -52,16 +58,14 @@ public class PaymentService {
         if (user.getSubscription() != null && "active".equalsIgnoreCase(user.getSubscription().getStatus())) {
             if (user.getSubscription().getCurrentPeriodEnd() != null && 
                     user.getSubscription().getCurrentPeriodEnd().isAfter(Instant.now())) {
-                throw new IllegalArgumentException("Bạn đang sử dụng gói Premium hoạt động. Không thể tạo phiên thanh toán mới.");
+                throw new IllegalArgumentException("Bạn đang sử dụng Hi Pro hoặc Hi Max. Không thể tạo phiên thanh toán mới.");
             }
         }
 
-        long amount = 49000L;
-        String planName = "PREMIUM_MONTHLY";
-        if ("yearly".equalsIgnoreCase(priceId) || priceId.contains("yearly") || priceId.contains("399000") || priceId.contains("premium_yearly")) {
-            amount = 399000L;
-            planName = "PREMIUM_YEARLY";
-        }
+        PlanPricingService.ResolvedPlan resolved = planPricingService.resolvePlan(priceId);
+        PlanPricingService.PlanPrice selectedPlan = resolved.plan();
+        long amount = selectedPlan.currentPrice();
+        String planName = selectedPlan.code();
 
         // PayOS orderCode must be a Long integer.
         // We combine the current epoch seconds with a random 4-digit code.
@@ -72,7 +76,7 @@ public class PaymentService {
         CreatePaymentLinkRequest request = CreatePaymentLinkRequest.builder()
                 .orderCode(orderCode)
                 .amount(amount)
-                .description("HiPremium" + ("PREMIUM_YEARLY".equals(planName) ? "Yearly" : "Monthly"))
+                .description("PREMIUM_YEARLY".equals(planName) ? "Hi Max" : "Hi Pro")
                 .returnUrl(baseUrl + "/payment/success?orderCode=" + orderCode)
                 .cancelUrl(baseUrl + "/payment/cancel")
                 .build();
@@ -95,9 +99,13 @@ public class PaymentService {
         transaction.setUserEmail(user.getEmail());
         transaction.setOrderCode(orderCode);
         transaction.setAmount(amount);
+        transaction.setBaseAmount(selectedPlan.basePrice());
+        transaction.setPaidAmount(amount);
+        transaction.setCampaignId(resolved.campaignId());
+        transaction.setPlanDisplayName(selectedPlan.name());
         transaction.setPlan(planName);
         transaction.setStatus("pending");
-        transaction.setDescription("HiPremium " + ("PREMIUM_YEARLY".equals(planName) ? "Yearly" : "Monthly"));
+        transaction.setDescription(selectedPlan.name());
         transactionRepository.save(transaction);
 
         log.info("Created PayOS payment link for user: {}, orderCode: {}, url: {}", user.getEmail(), orderCode, response.getCheckoutUrl());
@@ -133,10 +141,27 @@ public class PaymentService {
             log.info("Received valid PayOS Webhook. OrderCode: {}, Amount: {}, Description: {}",
                     orderCode, data.getAmount(), data.getDescription());
 
+            if (voucherOrderService.handlePaymentWebhook(orderCode, (long) data.getAmount())) {
+                log.info("Processed PayOS webhook as voucher order. OrderCode: {}", orderCode);
+                return;
+            }
+
             Optional<User> userOpt = userRepository.findByPayosOrderCode(orderCode);
             if (userOpt.isPresent()) {
                 User user = userOpt.get();
-                
+                Transaction transaction = transactionRepository.findByOrderCode(orderCode)
+                        .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy giao dịch chờ xử lý"));
+                long paidAmount = transaction.getPaidAmount() != null ? transaction.getPaidAmount() : transaction.getAmount();
+                if (paidAmount != data.getAmount()) {
+                    throw new IllegalArgumentException("Số tiền webhook không khớp giao dịch");
+                }
+                if ("completed".equalsIgnoreCase(transaction.getStatus())) {
+                    return;
+                }
+                if (!"pending".equalsIgnoreCase(transaction.getStatus())) {
+                    throw new IllegalArgumentException("Giao dịch không còn ở trạng thái chờ");
+                }
+
                 // Update User Subscription State
                 user.getSubscription().setStatus("active");
                 String plan = user.getSubscription().getPlan();
@@ -147,22 +172,8 @@ public class PaymentService {
                 userRepository.save(user);
 
                 // Update Transaction Status
-                Optional<Transaction> transOpt = transactionRepository.findByOrderCode(orderCode);
-                if (transOpt.isPresent()) {
-                    Transaction transaction = transOpt.get();
-                    transaction.setStatus("completed");
-                    transactionRepository.save(transaction);
-                } else {
-                    Transaction transaction = new Transaction();
-                    transaction.setUserId(user.getId());
-                    transaction.setUserEmail(user.getEmail());
-                    transaction.setOrderCode(orderCode);
-                    transaction.setAmount((long) data.getAmount());
-                    transaction.setPlan(plan);
-                    transaction.setStatus("completed");
-                    transaction.setDescription(data.getDescription());
-                    transactionRepository.save(transaction);
-                }
+                transaction.setStatus("completed");
+                transactionRepository.save(transaction);
 
                 realtimeEventService.sendSubscription(user.getId(), "subscription.updated", Map.of(
                         "subscription", user.getSubscription()
@@ -177,7 +188,7 @@ public class PaymentService {
                         "reason", "payment.completed",
                         "userId", user.getId()
                 ));
-                log.info("Successfully upgraded user {} to Premium. Expiration: {}", user.getEmail(), currentPeriodEnd);
+                log.info("Successfully upgraded user {} to paid Hi plan. Expiration: {}", user.getEmail(), currentPeriodEnd);
             } else {
                 log.warn("User not found for PayOS orderCode: {}", orderCode);
             }

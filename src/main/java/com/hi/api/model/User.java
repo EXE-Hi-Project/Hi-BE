@@ -110,6 +110,9 @@ public class User {
         private String aiResponseStyle = "FRIENDLY";
         private Boolean dailyQuestionsEnabled = false;
         private Boolean contextualCareSuggestionsEnabled = false;
+        private Boolean coupleQuestionAnswerEmailEnabled = true;
+        private Boolean coupleQuestionCommentEmailEnabled = false;
+        private Boolean coupleQuestionEditEmailEnabled = false;
     }
 
     @Data

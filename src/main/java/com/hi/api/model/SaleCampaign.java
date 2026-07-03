@@ -13,27 +13,24 @@ import java.time.Instant;
 
 @Data
 @NoArgsConstructor
-@Document(collection = "transactions")
-public class Transaction {
-
+@Document(collection = "sale_campaigns")
+public class SaleCampaign {
     @Id
     @JsonProperty("_id")
     private String id;
-
-    private String userId;
-    private String userEmail;
-
-    @Indexed(unique = true)
-    private Long orderCode;
-
-    private Long amount;
-    private Long baseAmount;
-    private Long paidAmount;
-    private String campaignId;
-    private String planDisplayName;
-    private String plan;
-    private String status; // pending, completed, failed, refunded, canceled
-    private String description;
+    private String name;
+    private String title;
+    private String subtitle;
+    private Long hiProSalePrice;
+    private Long hiMaxSalePrice;
+    @Indexed
+    private Instant startsAt;
+    @Indexed
+    private Instant endsAt;
+    @Indexed
+    private SaleCampaignStatus status = SaleCampaignStatus.DRAFT;
+    private String createdBy;
+    private String updatedBy;
 
     @CreatedDate
     private Instant createdAt;

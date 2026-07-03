@@ -84,7 +84,7 @@ public class SubscriptionAccessService {
 
     public void requireCouplePremium(User user, User partner) {
         if (!hasCouplePremium(user, partner)) {
-            throw new AccessDeniedException("Tính năng cặp đôi nâng cao yêu cầu một trong hai tài khoản có Premium");
+            throw new AccessDeniedException("Tính năng cặp đôi nâng cao yêu cầu một trong hai tài khoản có Hi Pro hoặc Hi Max");
         }
     }
 

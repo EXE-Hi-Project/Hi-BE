@@ -178,6 +178,55 @@ public class AnalyticsService {
         }
         stats.put("trafficTrend", trafficTrend);
 
+        // Daily active users: distinct authenticated users with any tracked activity per day.
+        var matchAuthenticatedActivity = new org.bson.Document("$match", new org.bson.Document("createdAt", new org.bson.Document("$gte", java.util.Date.from(since30Days)))
+                .append("userId", new org.bson.Document("$exists", true).append("$nin", Arrays.asList(null, ""))));
+        var groupUsersByDay = new org.bson.Document("$group", new org.bson.Document("_id",
+                new org.bson.Document("$dateToString", new org.bson.Document("format", "%Y-%m-%d")
+                        .append("date", "$createdAt")
+                        .append("timezone", "+07:00")))
+                .append("users", new org.bson.Document("$addToSet", "$userId")));
+        var projectDailyUsers = new org.bson.Document("$project", new org.bson.Document("activeUsers",
+                new org.bson.Document("$size", "$users")));
+        var sortDailyUsers = new org.bson.Document("$sort", new org.bson.Document("_id", 1));
+
+        var dailyUsersPipeline = List.of(matchAuthenticatedActivity, groupUsersByDay, projectDailyUsers, sortDailyUsers);
+        var dailyUsersResults = mongoTemplate.getCollection("analytics_events")
+                .aggregate(dailyUsersPipeline, org.bson.Document.class);
+
+        Map<String, Long> dailyUsersMap = new LinkedHashMap<>();
+        for (org.bson.Document doc : dailyUsersResults) {
+            String dateStr = doc.getString("_id");
+            Number countNum = doc.get("activeUsers", Number.class);
+            if (dateStr != null && countNum != null) {
+                dailyUsersMap.put(dateStr, countNum.longValue());
+            }
+        }
+
+        List<Map<String, Object>> dailyActiveUsersTrend = new ArrayList<>();
+        long last7ActiveUsers = 0;
+        long todayActiveUsers = 0;
+        for (int i = 29; i >= 0; i--) {
+            LocalDate targetDate = today.minusDays(i);
+            String dateKey = targetDate.format(formatter);
+            long activeUsers = dailyUsersMap.getOrDefault(dateKey, 0L);
+            if (i < 7) {
+                last7ActiveUsers += activeUsers;
+            }
+            if (i == 0) {
+                todayActiveUsers = activeUsers;
+            }
+
+            Map<String, Object> point = new LinkedHashMap<>();
+            point.put("date", dateKey);
+            point.put("label", targetDate.format(labelFormatter));
+            point.put("activeUsers", activeUsers);
+            dailyActiveUsersTrend.add(point);
+        }
+        overview.put("dailyActiveUsersToday", todayActiveUsers);
+        overview.put("dailyActiveUsers7dAvg", round2(last7ActiveUsers / 7.0));
+        stats.put("dailyActiveUsersTrend", dailyActiveUsersTrend);
+
         // 3. Hourly Page Views Traffic (24 hours)
         var groupPVByHour = new org.bson.Document("$group", new org.bson.Document("_id",
                 new org.bson.Document("$hour", "$createdAt"))

@@ -21,13 +21,18 @@ import org.springframework.security.access.AccessDeniedException;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class UserService {
+    private static final String DAILY_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    private static final ZoneId VIETNAM_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
 
     private final UserRepository userRepository;
     private final CycleRecordRepository cycleRecordRepository;
@@ -57,6 +62,40 @@ public class UserService {
         this.partnerAccessService = partnerAccessService;
         this.subscriptionAccessService = subscriptionAccessService;
         this.realtimeEventService = realtimeEventService;
+    }
+
+    private Optional<User> resolvePartnerByCode(String rawCode) {
+        if (rawCode == null || rawCode.isBlank()) {
+            return Optional.empty();
+        }
+
+        String normalizedCode = rawCode.trim().toUpperCase();
+        Optional<User> directMatch = userRepository.findByPartnerCode(normalizedCode);
+        if (directMatch.isPresent()) {
+            return directMatch;
+        }
+
+        return userRepository.findAll().stream()
+                .filter(candidate -> candidate.getPartnerCode() != null)
+                .filter(candidate -> normalizedCode.equals(buildDailyPartnerCode(candidate.getPartnerCode())))
+                .findFirst();
+    }
+
+    private String buildDailyPartnerCode(String baseCode) {
+        String source = baseCode.toUpperCase() + "-" + DateTimeFormatter.ISO_LOCAL_DATE.format(LocalDate.now(VIETNAM_ZONE));
+        int hash = 0x811c9dc5;
+        for (int index = 0; index < source.length(); index++) {
+            hash ^= source.charAt(index);
+            hash *= 16777619;
+        }
+
+        int value = hash;
+        StringBuilder code = new StringBuilder(6);
+        for (int index = 0; index < 6; index++) {
+            value = ((value ^ (index + 11)) * 1103515245) + 12345;
+            code.append(DAILY_CODE_ALPHABET.charAt(Integer.remainderUnsigned(value, DAILY_CODE_ALPHABET.length())));
+        }
+        return code.toString();
     }
 
     @CacheEvict(value = "ai_context", key = "#userId")
@@ -124,6 +163,9 @@ public class UserService {
         if (req.getPartnerNudgeTime() != null) prefs.setPartnerNudgeTime(validTime(req.getPartnerNudgeTime(), "21:00"));
         if (req.getDailyQuestionsEnabled() != null) prefs.setDailyQuestionsEnabled(req.getDailyQuestionsEnabled());
         if (req.getContextualCareSuggestionsEnabled() != null) prefs.setContextualCareSuggestionsEnabled(req.getContextualCareSuggestionsEnabled());
+        if (req.getCoupleQuestionAnswerEmailEnabled() != null) prefs.setCoupleQuestionAnswerEmailEnabled(req.getCoupleQuestionAnswerEmailEnabled());
+        if (req.getCoupleQuestionCommentEmailEnabled() != null) prefs.setCoupleQuestionCommentEmailEnabled(req.getCoupleQuestionCommentEmailEnabled());
+        if (req.getCoupleQuestionEditEmailEnabled() != null) prefs.setCoupleQuestionEditEmailEnabled(req.getCoupleQuestionEditEmailEnabled());
         if (req.getAiResponseStyle() != null && !req.getAiResponseStyle().isBlank()) {
             String style = req.getAiResponseStyle().trim().toUpperCase();
             prefs.setAiResponseStyle(style);
@@ -158,6 +200,9 @@ public class UserService {
         }
         if (prefs.getDailyQuestionsEnabled() == null) prefs.setDailyQuestionsEnabled(true);
         if (prefs.getContextualCareSuggestionsEnabled() == null) prefs.setContextualCareSuggestionsEnabled(true);
+        if (prefs.getCoupleQuestionAnswerEmailEnabled() == null) prefs.setCoupleQuestionAnswerEmailEnabled(true);
+        if (prefs.getCoupleQuestionCommentEmailEnabled() == null) prefs.setCoupleQuestionCommentEmailEnabled(false);
+        if (prefs.getCoupleQuestionEditEmailEnabled() == null) prefs.setCoupleQuestionEditEmailEnabled(false);
         user.setNotificationPreferences(prefs);
         return prefs;
     }
@@ -177,7 +222,7 @@ public class UserService {
         if ((Boolean.TRUE.equals(req.getDailyQuestionsEnabled())
                 || Boolean.TRUE.equals(req.getContextualCareSuggestionsEnabled()))
                 && !subscriptionAccessService.hasPremiumForCouple(user)) {
-            throw new AccessDeniedException("Tính năng cặp đôi nâng cao yêu cầu Premium");
+            throw new AccessDeniedException("Tính năng cặp đôi nâng cao yêu cầu Hi Pro hoặc Hi Max");
         }
         User.PartnerSharingPreferences sharing = ensurePartnerSharingPreferences(user);
         if (req.getShareDetailedSymptoms() != null) sharing.setShareDetailedSymptoms(req.getShareDetailedSymptoms());
@@ -293,7 +338,7 @@ public class UserService {
             throw new IllegalArgumentException("Bạn đã kết nối với một người khác. Vui lòng hủy kết nối trước.");
         }
 
-        User partner = userRepository.findByPartnerCode(req.getPartnerCode().toUpperCase())
+        User partner = resolvePartnerByCode(req.getPartnerCode())
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy Người ấy với mã này"));
 
         if (partner.getId().equals(userId)) {
@@ -412,6 +457,7 @@ public class UserService {
         User partner = partnerAccessService.requireCurrentPartner(user);
         boolean shareCycleData = partnerAccessService.canShareCycleData(partner);
         boolean shareMood = partnerAccessService.canShareMood(partner);
+        boolean shareDetailedSymptoms = partnerAccessService.canShareDetailedSymptoms(partner);
 
         List<CycleRecord> cycles = shareCycleData
                 ? cycleRecordRepository.findByUserIdOrderByStartDateDesc(
@@ -434,7 +480,8 @@ public class UserService {
         response.put("partner", partnerProfile);
         response.put("sharing", Map.of(
                 "shareCycleData", shareCycleData,
-                "shareMood", shareMood
+                "shareMood", shareMood,
+                "shareDetailedSymptoms", shareDetailedSymptoms
         ));
         response.put("cycles", cycles);
         response.put("history", historyResponse(
@@ -457,13 +504,24 @@ public class UserService {
         return response;
     }
 
+    public List<CycleRecord> getPartnerCycleHistory(String userId, LocalDate from, LocalDate to) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        User partner = partnerAccessService.requireCurrentPartner(user);
+        if (!partnerAccessService.canShareCycleData(partner)) return List.of();
+        LocalDate safeFrom = from.isAfter(to) ? to : from;
+        LocalDate safeTo = from.isAfter(to) ? from : to;
+        return cycleRecordRepository.findByUserIdAndStartDateBetweenOrderByStartDateDesc(
+                partner.getId(), safeFrom.minusDays(40), safeTo);
+    }
+
     private void requirePremiumNotificationAccess(User user, NotificationSettingsRequest req) {
         boolean enablesPremiumFeature = Boolean.TRUE.equals(req.getDailyQuestionsEnabled())
                 || Boolean.TRUE.equals(req.getContextualCareSuggestionsEnabled())
                 || Boolean.TRUE.equals(req.getPartnerCareTipsEnabled())
                 || Boolean.TRUE.equals(req.getPartnerEndOfDayNudgeEnabled());
         if (enablesPremiumFeature && !subscriptionAccessService.hasPremiumForCouple(user)) {
-            throw new AccessDeniedException("Tính năng chăm sóc cặp đôi nâng cao yêu cầu Premium");
+            throw new AccessDeniedException("Tính năng chăm sóc cặp đôi nâng cao yêu cầu Hi Pro hoặc Hi Max");
         }
     }
 

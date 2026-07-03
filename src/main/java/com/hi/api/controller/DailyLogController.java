@@ -38,6 +38,15 @@ public class DailyLogController {
         return ResponseEntity.ok(Map.of("success", true, "dailyLogs", logs));
     }
 
+    @GetMapping("/partner")
+    public ResponseEntity<Map<String, Object>> getPartnerLogs(
+            @AuthenticationPrincipal User user,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        List<DailyLog> logs = dailyLogService.getPartnerLogs(user.getId(), from, to);
+        return ResponseEntity.ok(Map.of("success", true, "dailyLogs", logs));
+    }
+
     @GetMapping("/{logDate}")
     public ResponseEntity<Map<String, Object>> getLog(
             @AuthenticationPrincipal User user,

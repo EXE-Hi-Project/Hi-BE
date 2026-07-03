@@ -9,6 +9,7 @@ import com.hi.api.model.DailyLogSymptom;
 import com.hi.api.model.FlowIntensity;
 import com.hi.api.model.SymptomDictionary;
 import com.hi.api.model.SymptomSeverity;
+import com.hi.api.model.User;
 import com.hi.api.repository.DailyLogRepository;
 import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
@@ -67,6 +68,33 @@ public class DailyLogService {
                         return afterFrom && beforeTo;
                     })
                     .collect(Collectors.toList());
+        }
+        attachSymptoms(logs);
+        return logs;
+    }
+
+    public List<DailyLog> getPartnerLogs(String userId, LocalDate from, LocalDate to) {
+        User user = userRepository.findById(userId).orElse(null);
+        if (user == null || user.getPartnerId() == null) {
+            return List.of();
+        }
+        User partner = userRepository.findById(user.getPartnerId()).orElse(null);
+        if (partner == null) {
+            return List.of();
+        }
+        if (partner.getPartnerSharingPreferences() == null ||
+            !Boolean.TRUE.equals(partner.getPartnerSharingPreferences().getShareDetailedSymptoms())) {
+            return List.of();
+        }
+        List<DailyLog> logs;
+        if (from != null && to != null) {
+            logs = dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(partner.getId(), from, to);
+        } else if (from != null) {
+            logs = dailyLogRepository.findByUserIdAndLogDateGreaterThanEqualOrderByLogDateDesc(partner.getId(), from);
+        } else if (to != null) {
+            logs = dailyLogRepository.findByUserIdAndLogDateLessThanEqualOrderByLogDateDesc(partner.getId(), to);
+        } else {
+            logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(partner.getId());
         }
         attachSymptoms(logs);
         return logs;

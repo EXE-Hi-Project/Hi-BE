@@ -37,6 +37,7 @@ class CoupleQuestionServiceTest {
     private NotificationService notificationService;
     private MongoTemplate mongoTemplate;
     private SubscriptionAccessService subscriptionAccessService;
+    private EmailService emailService;
     private CoupleQuestionService service;
 
     @BeforeEach
@@ -46,6 +47,7 @@ class CoupleQuestionServiceTest {
         notificationService = mock(NotificationService.class);
         mongoTemplate = mock(MongoTemplate.class);
         subscriptionAccessService = mock(SubscriptionAccessService.class);
+        emailService = mock(EmailService.class);
         service = new CoupleQuestionService(
                 sessionRepository,
                 mock(DailyQuestionRepository.class),
@@ -54,7 +56,8 @@ class CoupleQuestionServiceTest {
                 notificationService,
                 mongoTemplate,
                 subscriptionAccessService,
-                mock(RealtimeEventService.class)
+                mock(RealtimeEventService.class),
+                emailService
         );
     }
 
@@ -107,6 +110,7 @@ class CoupleQuestionServiceTest {
     void answerSessionAllowsEditingOwnAnswerAfterUnlock() {
         User user = user("user-a", "A");
         User partner = user("user-b", "B");
+        partner.getNotificationPreferences().setCoupleQuestionEditEmailEnabled(true);
         CoupleQuestionSession session = session(true);
         CoupleQuestionSession updated = session(true);
         updated.getAnswers().get("user-a").setContent("Câu trả lời mới");
@@ -141,6 +145,67 @@ class CoupleQuestionServiceTest {
         verify(notificationService, never()).createIdempotentNotification(
                 any(), any(), any(), any(), any(), any(), any()
         );
+        verify(emailService).sendCoupleQuestionEditEmail(
+                eq(partner.getEmail()), eq("B"), eq("A"), eq(session.getQuestionText()));
+    }
+
+    @Test
+    void notificationPreferencesUseSafeCoupleEmailDefaults() {
+        User.NotificationPreferences preferences = new User.NotificationPreferences();
+
+        assertEquals(true, preferences.getCoupleQuestionAnswerEmailEnabled());
+        assertEquals(false, preferences.getCoupleQuestionCommentEmailEnabled());
+        assertEquals(false, preferences.getCoupleQuestionEditEmailEnabled());
+    }
+
+    @Test
+    void firstAnswerSendsAnswerEmailWhenEnabled() {
+        User user = user("user-a", "A");
+        User partner = user("user-b", "B");
+        CoupleQuestionSession before = session(false);
+        before.setAnswers(new LinkedHashMap<>());
+        CoupleQuestionSession updated = session(false);
+        updated.setAnswers(new LinkedHashMap<>(Map.of(
+                "user-a", answer("user-a", "Câu trả lời mới")
+        )));
+
+        when(partnerAccessService.requireUser("user-a")).thenReturn(user);
+        when(partnerAccessService.requireCurrentPartner(user)).thenReturn(partner);
+        when(partnerAccessService.pairKey("user-a", "user-b")).thenReturn("user-a:user-b");
+        when(partnerAccessService.isActivePair("user-a", "user-b")).thenReturn(true);
+        when(partnerAccessService.notificationPreferences(partner)).thenReturn(partner.getNotificationPreferences());
+        when(sessionRepository.findByIdAndParticipantIdsContaining("session-1", "user-a"))
+                .thenReturn(Optional.of(before));
+        when(sessionRepository.findById("session-1")).thenReturn(Optional.of(before));
+        when(mongoTemplate.findAndModify(
+                any(Query.class), any(Update.class), any(FindAndModifyOptions.class), eq(CoupleQuestionSession.class)
+        )).thenReturn(updated);
+
+        service.answerSession("user-a", "session-1", "Câu trả lời mới");
+
+        verify(emailService).sendCoupleQuestionAnswerEmail(
+                eq(partner.getEmail()), eq("B"), eq("A"), eq(before.getQuestionText()));
+        verify(emailService, never()).sendCoupleQuestionEditEmail(any(), any(), any(), any());
+    }
+
+    @Test
+    void commentSendsItsContentWhenEnabled() {
+        User user = user("user-a", "A");
+        User partner = user("user-b", "B");
+        partner.getNotificationPreferences().setCoupleQuestionCommentEmailEnabled(true);
+        CoupleQuestionSession session = session(true);
+
+        when(partnerAccessService.requireUser("user-a")).thenReturn(user);
+        when(partnerAccessService.requireCurrentPartner(user)).thenReturn(partner);
+        when(partnerAccessService.pairKey("user-a", "user-b")).thenReturn("user-a:user-b");
+        when(sessionRepository.findByIdAndParticipantIdsContaining("session-1", "user-a"))
+                .thenReturn(Optional.of(session));
+        when(sessionRepository.findById("session-1")).thenReturn(Optional.of(session));
+
+        service.addMessage("user-a", "session-1", "Mình cũng nghĩ vậy");
+
+        verify(emailService).sendCoupleQuestionCommentEmail(
+                eq(partner.getEmail()), eq("B"), eq("A"), eq(session.getQuestionText()), eq("Mình cũng nghĩ vậy"));
     }
 
     @Test
@@ -192,6 +257,7 @@ class CoupleQuestionServiceTest {
         User user = new User();
         user.setId(id);
         user.setName(name);
+        user.setEmail(id + "@example.com");
         return user;
     }
 

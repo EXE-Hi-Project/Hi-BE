@@ -9,6 +9,7 @@ import com.hi.api.service.UserService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -121,5 +122,16 @@ public class UserController {
         response.put("latestMood", partnerData.get("latestMood"));
         response.put("latestDailyLogDate", partnerData.get("latestDailyLogDate"));
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/partner-cycles/history")
+    public ResponseEntity<Map<String, Object>> getPartnerCycleHistory(
+            @AuthenticationPrincipal User user,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) java.time.LocalDate to) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "items", userService.getPartnerCycleHistory(user.getId(), from, to)
+        ));
     }
 }

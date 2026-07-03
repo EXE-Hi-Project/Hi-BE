@@ -99,7 +99,7 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> cancelSubscription(@AuthenticationPrincipal User user) {
         try {
             paymentService.cancelSubscription(user);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Đã hủy gia hạn gói Premium"));
+            return ResponseEntity.ok(Map.of("success", true, "message", "Đã dừng gia hạn gói Hi"));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }

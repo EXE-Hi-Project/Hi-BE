@@ -260,6 +260,105 @@ public class EmailService {
     }
 
     /**
+     * Gửi email thông báo khi đối tác trả lời câu hỏi hằng ngày
+     */
+    @Async("mailExecutor")
+    public void sendCoupleQuestionAnswerEmail(String to, String recipientName, String partnerName, String questionText) {
+        try {
+            String safeRecipientName = escapeHtml(recipientName);
+            String safePartnerName = escapeHtml(partnerName);
+            String heading = "Chào " + safeRecipientName + " thương yêu,";
+            String body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
+                    "<strong>" + safePartnerName + "</strong> đã gửi câu trả lời cho câu hỏi ngày hôm nay rồi đó:</p>" +
+                    "<div style=\"background-color: #fff6f7; border-left: 4px solid #ff758c; padding: 15px; margin-bottom: 20px; font-style: italic; font-size: 16px; color: #4a4a4a; line-height: 1.6; border-radius: 8px;\">" +
+                    "  \"" + escapeHtml(questionText) + "\"" +
+                    "</div>" +
+                    "<p style=\"margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;\">" +
+                    "Đến lượt bạn chia sẻ để cùng mở khóa câu trả lời của nhau và thấu hiểu nhau hơn nha. Hi đang chờ câu trả lời từ bạn đó!</p>";
+
+            String html = buildHtmlTemplate(
+                    "Người ấy đã trả lời câu hỏi hôm nay - Hi App",
+                    heading,
+                    body,
+                    "Trả lời câu hỏi ngay",
+                    "https://hilover.space/partner?tab=today",
+                    to,
+                    "Thương bạn nhiều,"
+            );
+            sendRequiredEmail(to, "Người ấy đã trả lời câu hỏi hôm nay - Hi App", html, true);
+        } catch (Exception ex) {
+            log.warn("[EMAIL] Gửi email thông báo trả lời câu hỏi thất bại đến {}: {}", to, ex.getMessage());
+        }
+    }
+
+    /**
+     * Gửi email thông báo khi đối tác chỉnh sửa câu trả lời
+     */
+    @Async("mailExecutor")
+    public void sendCoupleQuestionEditEmail(String to, String recipientName, String partnerName, String questionText) {
+        try {
+            String safeRecipientName = escapeHtml(recipientName);
+            String safePartnerName = escapeHtml(partnerName);
+            String heading = "Chào " + safeRecipientName + " ơi,";
+            String body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
+                    "Bạn đồng hành <strong>" + safePartnerName + "</strong> của bạn vừa cập nhật lại câu trả lời cho câu hỏi:</p>" +
+                    "<div style=\"background-color: #fff6f7; border-left: 4px solid #ff758c; padding: 15px; margin-bottom: 20px; font-style: italic; font-size: 16px; color: #4a4a4a; line-height: 1.6; border-radius: 8px;\">" +
+                    "  \"" + escapeHtml(questionText) + "\"" +
+                    "</div>" +
+                    "<p style=\"margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;\">" +
+                    "Hãy vào Hi App để xem những chia sẻ mới nhất từ Người ấy nhé!</p>";
+
+            String html = buildHtmlTemplate(
+                    "Người ấy đã chỉnh sửa câu trả lời - Hi App",
+                    heading,
+                    body,
+                    "Xem câu trả lời",
+                    "https://hilover.space/partner?tab=today",
+                    to,
+                    "Thương bạn,"
+            );
+            sendRequiredEmail(to, "Người ấy đã chỉnh sửa câu trả lời - Hi App", html, true);
+        } catch (Exception ex) {
+            log.warn("[EMAIL] Gửi email thông báo sửa câu hỏi thất bại đến {}: {}", to, ex.getMessage());
+        }
+    }
+
+    /**
+     * Gửi email thông báo khi có tin nhắn/bình luận mới trong câu hỏi của cặp đôi
+     */
+    @Async("mailExecutor")
+    public void sendCoupleQuestionCommentEmail(String to, String recipientName, String partnerName,
+                                               String questionText, String commentContent) {
+        try {
+            String safeRecipientName = escapeHtml(recipientName);
+            String safePartnerName = escapeHtml(partnerName);
+            String heading = "Chào " + safeRecipientName + " thương mến,";
+            String body = "<p style=\"margin: 0 0 20px 0; font-size: 16px; line-height: 1.6;\">" +
+                    "<strong>" + safePartnerName + "</strong> vừa gửi cho bạn một tin nhắn trong phần thảo luận câu hỏi:</p>" +
+                    "<div style=\"background-color: #fff6f7; border-left: 4px solid #ff758c; padding: 15px; margin-bottom: 20px; font-style: italic; font-size: 16px; color: #4a4a4a; line-height: 1.6; border-radius: 8px;\">" +
+                    "  \"" + escapeHtml(commentContent) + "\"" +
+                    "</div>" +
+                    "<p style=\"margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #64748b;\">" +
+                    "Trong câu hỏi: \"" + escapeHtml(questionText) + "\"</p>" +
+                    "<p style=\"margin: 0 0 20px 0; font-size: 15px; line-height: 1.6;\">" +
+                    "Đừng để Người ấy đợi lâu, hãy mở Hi App và trò chuyện cùng nhau nha!</p>";
+
+            String html = buildHtmlTemplate(
+                    "Bạn có tin nhắn mới từ Người ấy - Hi App",
+                    heading,
+                    body,
+                    "Nhắn tin lại ngay",
+                    "https://hilover.space/partner?tab=today",
+                    to,
+                    "Yêu hai bạn,"
+            );
+            sendRequiredEmail(to, "Bạn có tin nhắn mới từ Người ấy - Hi App", html, true);
+        } catch (Exception ex) {
+            log.warn("[EMAIL] Gửi email thông báo tin nhắn câu hỏi thất bại đến {}: {}", to, ex.getMessage());
+        }
+    }
+
+    /**
      * Fallback cho các trường hợp gửi mail tuỳ chọn khác (Plain-text/HTML tự do)
      */
     @Async("mailExecutor")

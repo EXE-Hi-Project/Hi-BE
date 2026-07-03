@@ -360,6 +360,9 @@ public class AdminService {
         if (role != null && !role.isBlank()) criteriaList.add(Criteria.where("role").is(role));
         if (gender != null && !gender.isBlank()) criteriaList.add(Criteria.where("gender").is(gender));
 
+        // Exclude soft-deleted users
+        criteriaList.add(Criteria.where("accountStatus").ne("DELETED"));
+
         if (!criteriaList.isEmpty()) {
             query.addCriteria(new Criteria().andOperator(criteriaList.toArray(new Criteria[0])));
         }

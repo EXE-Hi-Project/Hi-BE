@@ -44,6 +44,7 @@ public class AffiliateProductService {
     private final SequenceService sequenceService;
     private final AffiliateTiktokClient affiliateTiktokClient;
     private final AffiliateShopeeClient affiliateShopeeClient;
+    private final GotItBizClient gotItBizClient;
     private final MongoTemplate mongoTemplate;
     private final AffiliateUrlPolicy affiliateUrlPolicy;
     private final AffiliateProductMetadataParser metadataParser;
@@ -55,6 +56,7 @@ public class AffiliateProductService {
                                    SequenceService sequenceService,
                                    AffiliateTiktokClient affiliateTiktokClient,
                                    AffiliateShopeeClient affiliateShopeeClient,
+                                   GotItBizClient gotItBizClient,
                                    MongoTemplate mongoTemplate,
                                    AffiliateUrlPolicy affiliateUrlPolicy,
                                    AffiliateProductMetadataParser metadataParser,
@@ -65,6 +67,7 @@ public class AffiliateProductService {
         this.sequenceService = sequenceService;
         this.affiliateTiktokClient = affiliateTiktokClient;
         this.affiliateShopeeClient = affiliateShopeeClient;
+        this.gotItBizClient = gotItBizClient;
         this.mongoTemplate = mongoTemplate;
         this.affiliateUrlPolicy = affiliateUrlPolicy;
         this.metadataParser = metadataParser;
@@ -352,13 +355,14 @@ public class AffiliateProductService {
         if (platform == null) {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("platform", "ALL");
-            result.put("results", List.of(sync(AffiliatePlatform.TIKTOK), sync(AffiliatePlatform.SHOPEE)));
+            result.put("results", List.of(sync(AffiliatePlatform.TIKTOK), sync(AffiliatePlatform.SHOPEE), sync(AffiliatePlatform.GOTIT)));
             result.put("syncedAt", Instant.now());
             return result;
         }
         return switch (platform) {
             case TIKTOK -> syncFromPlatform(AffiliatePlatform.TIKTOK, affiliateTiktokClient.fetchProducts());
             case SHOPEE -> syncFromPlatform(AffiliatePlatform.SHOPEE, affiliateShopeeClient.fetchProducts());
+            case GOTIT -> syncFromPlatform(AffiliatePlatform.GOTIT, gotItBizClient.fetchProducts());
             default -> throw new IllegalArgumentException("Nền tảng affiliate chưa được hỗ trợ sync tự động");
         };
     }
@@ -490,6 +494,9 @@ public class AffiliateProductService {
         product.setStatus(value(firstString(raw, "status"), "ACTIVE").toUpperCase());
         Boolean isActive = firstBoolean(raw, "is_active", "isActive", "active", "available");
         product.setIsActive(isActive != null ? isActive : !"ARCHIVED".equalsIgnoreCase(product.getStatus()));
+        product.setGoalTags(firstStringList(raw, "goalTags", "goal_tags", "tags"));
+        product.setSymptomTags(firstStringList(raw, "symptomTags", "symptom_tags"));
+        product.setPhaseTags(firstStringList(raw, "phaseTags", "phase_tags"));
         product.setLastSyncedAt(Instant.now());
 
         return affiliateProductRepository.save(product);
@@ -570,6 +577,25 @@ public class AffiliateProductService {
             if ("0".equals(text) || "false".equalsIgnoreCase(text) || "no".equalsIgnoreCase(text)) return false;
         }
         return null;
+    }
+
+    private List<String> firstStringList(Map<String, Object> raw, String... keys) {
+        for (String key : keys) {
+            Object value = raw.get(key);
+            if (value instanceof List<?> list) {
+                return list.stream()
+                        .map(item -> item == null ? "" : String.valueOf(item).trim())
+                        .filter(item -> !item.isBlank())
+                        .toList();
+            }
+            if (value instanceof String text && !text.isBlank()) {
+                return Arrays.stream(text.split(","))
+                        .map(String::trim)
+                        .filter(item -> !item.isBlank())
+                        .toList();
+            }
+        }
+        return List.of();
     }
 
     private String value(String value, String fallback) {
