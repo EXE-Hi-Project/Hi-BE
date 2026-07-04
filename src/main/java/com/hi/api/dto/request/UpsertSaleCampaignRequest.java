@@ -22,11 +22,11 @@ public class UpsertSaleCampaignRequest {
     private String subtitle;
 
     @NotNull
-    @Min(0)
+    @Min(1000)
     private Long hiProSalePrice;
 
     @NotNull
-    @Min(0)
+    @Min(1000)
     private Long hiMaxSalePrice;
 
     @NotNull

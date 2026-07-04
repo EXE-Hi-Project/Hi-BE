@@ -53,9 +53,9 @@ public class PartnerExperienceController {
 
     @PostMapping("/questions/today/skip")
     public ResponseEntity<Map<String, Object>> skip(@AuthenticationPrincipal User user) {
-        return ResponseEntity.status(HttpStatus.GONE).body(Map.of(
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of(
                 "success", false,
-                "message", "Tính năng bỏ qua câu hỏi đã được tắt"
+                "message", "Cả hai bạn cần trả lời để mở câu hỏi tiếp theo"
         ));
     }
 

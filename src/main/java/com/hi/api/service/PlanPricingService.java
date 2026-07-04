@@ -191,6 +191,9 @@ public class PlanPricingService {
         if (!request.getEndsAt().isAfter(request.getStartsAt())) {
             throw new IllegalArgumentException("Thời gian kết thúc phải sau thời gian bắt đầu");
         }
+        if (request.getHiProSalePrice() <= 0 || request.getHiMaxSalePrice() <= 0) {
+            throw new IllegalArgumentException("Giá sale phải lớn hơn 0");
+        }
         if (request.getHiProSalePrice() >= pricing.getHiProBasePrice()
                 || request.getHiMaxSalePrice() >= pricing.getHiMaxBasePrice()) {
             throw new IllegalArgumentException("Giá sale phải thấp hơn giá gốc của từng gói");
