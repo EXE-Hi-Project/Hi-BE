@@ -70,11 +70,16 @@ jobs:
             upsert_env "PAYOS_API_KEY" "$PAYOS_API_KEY"
             upsert_env "PAYOS_CHECKSUM_KEY" "$PAYOS_CHECKSUM_KEY"
             upsert_env "GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_ID"
-            if [ -z "$TOMTOM_SEARCH_API_KEY" ]; then
-              echo "Missing GitHub Secret: TOMTOM_SEARCH_API_KEY"
+            TOMTOM_SEARCH_API_KEY_CURRENT=$(grep -E '^TOMTOM_SEARCH_API_KEY=' .env | tail -n 1 | cut -d= -f2- || true)
+            if [ -n "$TOMTOM_SEARCH_API_KEY" ]; then
+              upsert_env "TOMTOM_SEARCH_API_KEY" "$TOMTOM_SEARCH_API_KEY"
+              echo "✅ TOMTOM_SEARCH_API_KEY updated from GitHub Secret"
+            elif [ -n "$TOMTOM_SEARCH_API_KEY_CURRENT" ]; then
+              echo "✅ TOMTOM_SEARCH_API_KEY already configured in server .env"
+            else
+              echo "Missing TOMTOM_SEARCH_API_KEY. Add GitHub Secret TOMTOM_SEARCH_API_KEY or set it once in ~/hi-app/.env on EC2."
               exit 1
             fi
-            upsert_env "TOMTOM_SEARCH_API_KEY" "$TOMTOM_SEARCH_API_KEY"
             upsert_env "TOMTOM_SEARCH_URL" "https://api.tomtom.com/search/2/search"
             upsert_env "CLIENT_URL" "${CLIENT_URL:-https://hilover.space}"
             upsert_env "PAYMENT_RETURN_ALLOWED_ORIGINS" "${PAYMENT_RETURN_ALLOWED_ORIGINS:-https://hilover.space,https://www.hilover.space}"
