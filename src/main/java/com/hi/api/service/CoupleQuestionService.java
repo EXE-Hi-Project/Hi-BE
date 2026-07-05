@@ -68,58 +68,19 @@ public class CoupleQuestionService {
     }
 
     private boolean isSessionFinished(CoupleQuestionSession session) {
-        if (session == null) {
-            return true;
-        }
-        if (session.getUnlockedAt() != null) {
-            return true;
-        }
+        if (session == null) return false;
         List<String> participants = session.getParticipantIds();
-        if (participants == null || participants.isEmpty()) {
-            return true;
-        }
-        for (String pId : participants) {
-            boolean answered = session.getAnswers() != null && session.getAnswers().containsKey(pId);
-            boolean skipped = session.getSkippedBy() != null && session.getSkippedBy().contains(pId);
-            if (!answered && !skipped) {
-                return false;
-            }
-        }
-        return true;
+        return participants != null
+                && participants.size() == 2
+                && participants.stream().allMatch(participantId -> hasValidAnswer(session, participantId));
     }
 
     private boolean shouldUnlock(CoupleQuestionSession session) {
-        if (session == null || session.getUnlockedAt() != null) {
-            return false;
-        }
-        List<String> participants = session.getParticipantIds();
-        if (participants == null || participants.isEmpty()) {
-            return false;
-        }
-        for (String pId : participants) {
-            boolean answered = session.getAnswers() != null && session.getAnswers().containsKey(pId);
-            boolean skipped = session.getSkippedBy() != null && session.getSkippedBy().contains(pId);
-            if (!answered && !skipped) {
-                return false;
-            }
-        }
-        return true;
+        return session != null && session.getUnlockedAt() == null && isSessionFinished(session);
     }
 
     private CoupleQuestionSession getActiveOrCreateToday(User user, User partner) {
         subscriptionAccessService.requireCouplePremium(user, partner);
-        String pairKey = partnerAccessService.pairKey(user.getId(), partner.getId());
-        Optional<CoupleQuestionSession> latestOpt = sessionRepository.findFirstByPairKeyOrderByQuestionDateDesc(pairKey);
-        if (latestOpt.isPresent()) {
-            CoupleQuestionSession latest = latestOpt.get();
-            if (!isSessionFinished(latest)) {
-                return latest;
-            }
-            LocalDate today = LocalDate.now(APP_ZONE);
-            if (latest.getQuestionDate().equals(today)) {
-                return latest;
-            }
-        }
         return getOrCreate(user, partner, LocalDate.now(APP_ZONE));
     }
 
@@ -136,6 +97,10 @@ public class CoupleQuestionService {
     public CoupleQuestionSession getOrCreate(User user, User partner, LocalDate date) {
         subscriptionAccessService.requireCouplePremium(user, partner);
         String pairKey = partnerAccessService.pairKey(user.getId(), partner.getId());
+        Optional<CoupleQuestionSession> unfinished = findOldestUnfinished(pairKey, date);
+        if (unfinished.isPresent()) {
+            return normalizeLegacyIncompleteSession(unfinished.get());
+        }
         return sessionRepository.findByPairKeyAndQuestionDate(pairKey, date).orElseGet(() -> {
             List<DailyQuestion> questions = questionRepository.findByActiveTrueOrderByDisplayOrderAsc();
             if (questions.isEmpty()) {
@@ -210,20 +175,7 @@ public class CoupleQuestionService {
     }
 
     public Map<String, Object> skipToday(String userId) {
-        User user = partnerAccessService.requireUser(userId);
-        User partner = partnerAccessService.requireCurrentPartner(user);
-        CoupleQuestionSession session = getActiveOrCreateToday(user, partner);
-        mongoTemplate.updateFirst(
-                Query.query(Criteria.where("id").is(session.getId()).and("participantIds").is(userId)),
-                new Update().addToSet("skippedBy", userId),
-                CoupleQuestionSession.class);
-        CoupleQuestionSession updated = sessionRepository.findById(session.getId()).orElseThrow();
-        if (shouldUnlock(updated)) {
-            unlock(updated);
-            updated = sessionRepository.findById(updated.getId()).orElse(updated);
-        }
-        emitQuestionUpdate(updated);
-        return sessionResponse(updated, userId, true);
+        throw new IllegalStateException("Cả hai bạn cần trả lời để mở câu hỏi tiếp theo");
     }
 
     public Map<String, Object> getSession(String userId, String sessionId) {
@@ -354,7 +306,7 @@ public class CoupleQuestionService {
         if (!session.getPairKey().equals(partnerAccessService.pairKey(userId, partner.getId()))) {
             throw new AccessDeniedException("Bạn không có quyền nhắn trong cuộc trò chuyện này");
         }
-        if (session.getUnlockedAt() == null) {
+        if (!isSessionFinished(session)) {
             throw new IllegalArgumentException("Hai bạn cần trả lời trước khi trò chuyện");
         }
         CoupleQuestionSession.Message message = new CoupleQuestionSession.Message();
@@ -449,7 +401,7 @@ public class CoupleQuestionService {
         CoupleQuestionSession.Answer myAnswer = session.getAnswers() != null ? session.getAnswers().get(userId) : null;
         String partnerId = session.getParticipantIds().stream().filter(id -> !id.equals(userId)).findFirst().orElse(null);
         CoupleQuestionSession.Answer partnerAnswer = session.getAnswers() != null ? session.getAnswers().get(partnerId) : null;
-        boolean unlocked = session.getUnlockedAt() != null;
+        boolean unlocked = isSessionFinished(session);
         boolean canSeePartner = activePair && unlocked;
 
         Map<String, Object> response = new LinkedHashMap<>();
@@ -510,8 +462,30 @@ public class CoupleQuestionService {
     }
 
     private String status(CoupleQuestionSession session, String userId) {
-        if (session.getUnlockedAt() != null) return "UNLOCKED";
-        if (session.getAnswers() != null && session.getAnswers().containsKey(userId)) return "WAITING_PARTNER";
+        if (isSessionFinished(session)) return "UNLOCKED";
+        if (hasValidAnswer(session, userId)) return "WAITING_PARTNER";
         return "UNANSWERED";
+    }
+
+    private Optional<CoupleQuestionSession> findOldestUnfinished(String pairKey, LocalDate throughDate) {
+        List<CoupleQuestionSession> sessions = Optional
+                .ofNullable(sessionRepository.findByPairKeyOrderByQuestionDateAsc(pairKey))
+                .orElseGet(List::of);
+        return sessions.stream()
+                .filter(session -> session.getQuestionDate() != null && !session.getQuestionDate().isAfter(throughDate))
+                .filter(session -> !isSessionFinished(session))
+                .findFirst();
+    }
+
+    private CoupleQuestionSession normalizeLegacyIncompleteSession(CoupleQuestionSession session) {
+        if (session.getUnlockedAt() == null) return session;
+        session.setUnlockedAt(null);
+        return sessionRepository.save(session);
+    }
+
+    private boolean hasValidAnswer(CoupleQuestionSession session, String participantId) {
+        if (session.getAnswers() == null || participantId == null) return false;
+        CoupleQuestionSession.Answer answer = session.getAnswers().get(participantId);
+        return answer != null && answer.getContent() != null && !answer.getContent().isBlank();
     }
 }

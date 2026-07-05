@@ -15,7 +15,7 @@ import static org.mockito.Mockito.mock;
 class PartnerExperienceControllerTest {
 
     @Test
-    void skipEndpointIsGone() {
+    void skipEndpointConflictsWithRequiredAnswerFlow() {
         PartnerExperienceController controller = new PartnerExperienceController(
                 mock(CoupleQuestionService.class),
                 mock(PartnerCareSuggestionService.class)
@@ -25,7 +25,8 @@ class PartnerExperienceControllerTest {
 
         ResponseEntity<Map<String, Object>> response = controller.skip(user);
 
-        assertEquals(HttpStatus.GONE, response.getStatusCode());
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
         assertEquals(false, response.getBody().get("success"));
+        assertEquals("Cả hai bạn cần trả lời để mở câu hỏi tiếp theo", response.getBody().get("message"));
     }
 }

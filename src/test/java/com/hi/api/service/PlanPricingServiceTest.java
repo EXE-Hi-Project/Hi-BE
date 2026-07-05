@@ -64,6 +64,20 @@ class PlanPricingServiceTest {
     }
 
     @Test
+    void salePriceMustBeGreaterThanZero() {
+        UpsertSaleCampaignRequest request = new UpsertSaleCampaignRequest();
+        request.setName("Zero sale");
+        request.setTitle("Zero sale");
+        request.setHiProSalePrice(0L);
+        request.setHiMaxSalePrice(299_000L);
+        request.setStartsAt(Instant.now().plusSeconds(60));
+        request.setEndsAt(Instant.now().plusSeconds(3600));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.createSale("admin", request, "127.0.0.1"));
+    }
+
+    @Test
     void salePriceMustBeBelowBasePrice() {
         UpsertSaleCampaignRequest request = new UpsertSaleCampaignRequest();
         request.setName("Sale lỗi");

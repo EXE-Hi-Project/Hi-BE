@@ -1,6 +1,7 @@
 package com.hi.api.service;
 
 import com.hi.api.model.CoupleQuestionSession;
+import com.hi.api.model.DailyQuestion;
 import com.hi.api.model.User;
 import com.hi.api.repository.CoupleQuestionSessionRepository;
 import com.hi.api.repository.DailyQuestionRepository;
@@ -23,6 +24,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -33,6 +35,7 @@ import static org.mockito.Mockito.when;
 class CoupleQuestionServiceTest {
 
     private CoupleQuestionSessionRepository sessionRepository;
+    private DailyQuestionRepository questionRepository;
     private PartnerAccessService partnerAccessService;
     private NotificationService notificationService;
     private MongoTemplate mongoTemplate;
@@ -43,6 +46,7 @@ class CoupleQuestionServiceTest {
     @BeforeEach
     void setUp() {
         sessionRepository = mock(CoupleQuestionSessionRepository.class);
+        questionRepository = mock(DailyQuestionRepository.class);
         partnerAccessService = mock(PartnerAccessService.class);
         notificationService = mock(NotificationService.class);
         mongoTemplate = mock(MongoTemplate.class);
@@ -50,7 +54,7 @@ class CoupleQuestionServiceTest {
         emailService = mock(EmailService.class);
         service = new CoupleQuestionService(
                 sessionRepository,
-                mock(DailyQuestionRepository.class),
+                questionRepository,
                 mock(UserRepository.class),
                 partnerAccessService,
                 notificationService,
@@ -64,6 +68,7 @@ class CoupleQuestionServiceTest {
     @Test
     void hidesPartnerAnswerUntilBothAnswersAreUnlocked() {
         CoupleQuestionSession session = session(false);
+        session.getAnswers().remove("user-a");
         when(sessionRepository.findByIdAndParticipantIdsContaining("session-1", "user-a"))
                 .thenReturn(Optional.of(session));
         when(partnerAccessService.isActivePair("user-a", "user-b")).thenReturn(true);
@@ -73,6 +78,121 @@ class CoupleQuestionServiceTest {
         assertNull(response.get("partnerAnswer"));
         assertEquals(false, response.get("unlocked"));
         assertEquals(true, response.get("partnerAnswered"));
+    }
+
+    @Test
+    void getTodayReturnsOldestUnfinishedQuestionBeforeToday() {
+        User user = user("user-a", "A");
+        User partner = user("user-b", "B");
+        user.getNotificationPreferences().setDailyQuestionsEnabled(true);
+        CoupleQuestionSession completed = session(true);
+        completed.setId("completed");
+        completed.setQuestionDate(LocalDate.now().minusDays(3));
+        CoupleQuestionSession oldestUnfinished = session(false);
+        oldestUnfinished.setId("oldest-unfinished");
+        oldestUnfinished.setQuestionDate(LocalDate.now().minusDays(2));
+        oldestUnfinished.getAnswers().remove("user-b");
+        CoupleQuestionSession newerUnfinished = session(false);
+        newerUnfinished.setId("newer-unfinished");
+        newerUnfinished.setQuestionDate(LocalDate.now().minusDays(1));
+        newerUnfinished.getAnswers().remove("user-a");
+
+        when(partnerAccessService.requireUser("user-a")).thenReturn(user);
+        when(partnerAccessService.requireCurrentPartner(user)).thenReturn(partner);
+        when(partnerAccessService.pairKey("user-a", "user-b")).thenReturn("user-a:user-b");
+        when(partnerAccessService.notificationPreferences(user)).thenReturn(user.getNotificationPreferences());
+        when(sessionRepository.findByPairKeyOrderByQuestionDateAsc("user-a:user-b"))
+                .thenReturn(List.of(completed, oldestUnfinished, newerUnfinished));
+
+        Map<String, Object> response = service.getToday("user-a");
+
+        assertEquals("oldest-unfinished", response.get("_id"));
+        assertEquals(false, response.get("unlocked"));
+    }
+
+    @Test
+    void schedulerContractDoesNotCreateTodayWhileBacklogExists() {
+        User user = user("user-a", "A");
+        User partner = user("user-b", "B");
+        LocalDate today = LocalDate.now();
+        CoupleQuestionSession backlog = session(false);
+        backlog.setId("backlog");
+        backlog.setQuestionDate(today.minusDays(1));
+        backlog.getAnswers().remove("user-b");
+
+        when(partnerAccessService.pairKey("user-a", "user-b")).thenReturn("user-a:user-b");
+        when(sessionRepository.findByPairKeyOrderByQuestionDateAsc("user-a:user-b"))
+                .thenReturn(List.of(backlog));
+
+        CoupleQuestionSession result = service.getOrCreate(user, partner, today);
+
+        assertEquals("backlog", result.getId());
+        verify(sessionRepository, never()).findByPairKeyAndQuestionDate("user-a:user-b", today);
+    }
+
+    @Test
+    void createsTodayQuestionOnlyAfterEveryPastQuestionHasBothAnswers() {
+        User user = user("user-a", "A");
+        User partner = user("user-b", "B");
+        LocalDate today = LocalDate.now();
+        CoupleQuestionSession completedPast = session(true);
+        completedPast.setQuestionDate(today.minusDays(1));
+        DailyQuestion dailyQuestion = new DailyQuestion();
+        dailyQuestion.setId("daily-question-1");
+        dailyQuestion.setPrompt("Câu hỏi mới");
+        dailyQuestion.setCategory("COUPLE");
+
+        when(partnerAccessService.pairKey("user-a", "user-b")).thenReturn("user-a:user-b");
+        when(partnerAccessService.notificationPreferences(user)).thenReturn(user.getNotificationPreferences());
+        when(partnerAccessService.notificationPreferences(partner)).thenReturn(partner.getNotificationPreferences());
+        when(sessionRepository.findByPairKeyOrderByQuestionDateAsc("user-a:user-b"))
+                .thenReturn(List.of(completedPast));
+        when(sessionRepository.findByPairKeyAndQuestionDate("user-a:user-b", today))
+                .thenReturn(Optional.empty());
+        when(questionRepository.findByActiveTrueOrderByDisplayOrderAsc())
+                .thenReturn(List.of(dailyQuestion));
+        when(sessionRepository.save(any(CoupleQuestionSession.class)))
+                .thenAnswer(invocation -> {
+                    CoupleQuestionSession saved = invocation.getArgument(0);
+                    saved.setId("today-session");
+                    return saved;
+                });
+
+        CoupleQuestionSession result = service.getOrCreate(user, partner, today);
+
+        assertEquals(today, result.getQuestionDate());
+        assertEquals("daily-question-1", result.getQuestionId());
+        assertEquals(List.of("user-a", "user-b"), result.getParticipantIds());
+    }
+
+    @Test
+    void legacySkippedSessionWithUnlockedTimestampIsLockedAndNormalized() {
+        User user = user("user-a", "A");
+        User partner = user("user-b", "B");
+        user.getNotificationPreferences().setDailyQuestionsEnabled(true);
+        CoupleQuestionSession legacy = session(true);
+        legacy.getAnswers().remove("user-b");
+        legacy.setSkippedBy(List.of("user-b"));
+
+        when(partnerAccessService.requireUser("user-a")).thenReturn(user);
+        when(partnerAccessService.requireCurrentPartner(user)).thenReturn(partner);
+        when(partnerAccessService.pairKey("user-a", "user-b")).thenReturn("user-a:user-b");
+        when(partnerAccessService.notificationPreferences(user)).thenReturn(user.getNotificationPreferences());
+        when(sessionRepository.findByPairKeyOrderByQuestionDateAsc("user-a:user-b"))
+                .thenReturn(List.of(legacy));
+        when(sessionRepository.save(legacy)).thenReturn(legacy);
+
+        Map<String, Object> response = service.getToday("user-a");
+
+        assertEquals(false, response.get("unlocked"));
+        assertNull(response.get("partnerAnswer"));
+        assertNull(legacy.getUnlockedAt());
+        verify(sessionRepository).save(legacy);
+    }
+
+    @Test
+    void skipNeverCompletesTheCurrentQuestion() {
+        assertThrows(IllegalStateException.class, () -> service.skipToday("user-a"));
     }
 
     @Test
