@@ -8,6 +8,7 @@ jobs:
   deploy:
     name: SSH Deploy to EC2
     runs-on: ubuntu-latest
+    environment: TOMTOM_SEARCH_API_KEY
     timeout-minutes: 15
 
     steps:
