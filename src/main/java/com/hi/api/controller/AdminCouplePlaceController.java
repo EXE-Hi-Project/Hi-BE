@@ -61,6 +61,14 @@ public class AdminCouplePlaceController {
         return ResponseEntity.ok(Map.of("success", true, "review", review));
     }
 
+    @DeleteMapping("/{placeId}/reviews/{reviewId}")
+    public ResponseEntity<Map<String, Object>> deleteReview(
+            @PathVariable Long placeId,
+            @PathVariable Long reviewId) {
+        couplePlaceService.deleteReview(placeId, reviewId);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
     @GetMapping("/reports")
     public ResponseEntity<Map<String, Object>> reports() {
         List<CouplePlaceReport> reports = couplePlaceService.adminReports();

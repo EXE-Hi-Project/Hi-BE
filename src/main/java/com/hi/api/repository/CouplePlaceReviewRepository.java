@@ -16,4 +16,6 @@ public interface CouplePlaceReviewRepository extends MongoRepository<CouplePlace
     Page<CouplePlaceReview> findByPlaceIdOrderByCreatedAtDesc(Long placeId, Pageable pageable);
     Page<CouplePlaceReview> findByPlaceIdAndStatusOrderByCreatedAtDesc(Long placeId, CouplePlaceStatus status, Pageable pageable);
     Optional<CouplePlaceReview> findByIdAndPlaceId(Long id, Long placeId);
+    boolean existsByPlaceIdAndUserId(Long placeId, String userId);
+    List<CouplePlaceReview> findByPlaceIdInAndUserId(List<Long> placeIds, String userId);
 }
