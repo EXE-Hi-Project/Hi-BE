@@ -41,7 +41,7 @@ class SubscriptionAccessServiceTest {
     }
 
     @Test
-    void partnerPremiumUnlocksOnlyCoupleEntitlementsForFreeUser() {
+    void partnerPremiumUnlocksFullPremiumForFreeUser() {
         User freeUser = user("free-user", "free", null, null);
         User premiumPartner = user("premium-partner", "premium_yearly", "active", Instant.now().plusSeconds(3_600));
         freeUser.setPartnerId(premiumPartner.getId());
@@ -49,11 +49,30 @@ class SubscriptionAccessServiceTest {
         when(userRepository.findById(premiumPartner.getId())).thenReturn(Optional.of(premiumPartner));
 
         assertThat(service.hasPremiumForCouple(freeUser)).isTrue();
+        SubscriptionAccessService.SubscriptionAccess access = service.getAccess(freeUser);
+        assertThat(access.tier()).isEqualTo("PREMIUM");
+        assertThat(access.plan()).isEqualTo("PREMIUM_YEARLY");
+        assertThat(access.aiDailyLimit()).isEqualTo(50);
+        assertThat(access.sharedFromPartner()).isTrue();
         assertThat(service.getEffectiveEntitlements(freeUser))
                 .containsEntry("coupleDailyQuestions", true)
                 .containsEntry("contextualPartnerCare", true)
-                .containsEntry("advancedCycleAnalytics", false)
-                .containsEntry("priorityAi", false);
+                .containsEntry("advancedCycleAnalytics", true)
+                .containsEntry("priorityAi", true);
+    }
+
+    @Test
+    void oneWayPartnerLinkDoesNotSharePremium() {
+        User freeUser = user("free-user", "free", null, null);
+        User premiumPartner = user("premium-partner", "premium_yearly", "active", Instant.now().plusSeconds(3_600));
+        freeUser.setPartnerId(premiumPartner.getId());
+        when(userRepository.findById(premiumPartner.getId())).thenReturn(Optional.of(premiumPartner));
+
+        SubscriptionAccessService.SubscriptionAccess access = service.getAccess(freeUser);
+
+        assertThat(service.hasPremiumForCouple(freeUser)).isFalse();
+        assertThat(access.tier()).isEqualTo("FREE");
+        assertThat(access.sharedFromPartner()).isFalse();
     }
 
     @Test

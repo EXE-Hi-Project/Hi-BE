@@ -64,7 +64,7 @@ class PlanPricingServiceTest {
     }
 
     @Test
-    void salePriceMustBeGreaterThanZero() {
+    void salePriceCanBeZero() {
         UpsertSaleCampaignRequest request = new UpsertSaleCampaignRequest();
         request.setName("Zero sale");
         request.setTitle("Zero sale");
@@ -72,9 +72,15 @@ class PlanPricingServiceTest {
         request.setHiMaxSalePrice(299_000L);
         request.setStartsAt(Instant.now().plusSeconds(60));
         request.setEndsAt(Instant.now().plusSeconds(3600));
+        when(saleRepository.save(any(SaleCampaign.class))).thenAnswer(invocation -> {
+            SaleCampaign saved = invocation.getArgument(0);
+            saved.setId("zero-sale");
+            return saved;
+        });
 
-        assertThrows(IllegalArgumentException.class,
-                () -> service.createSale("admin", request, "127.0.0.1"));
+        PlanPricingService.SaleView sale = service.createSale("admin", request, "127.0.0.1");
+
+        assertEquals(0L, sale.hiProSalePrice());
     }
 
     @Test

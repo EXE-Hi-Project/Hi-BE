@@ -1,15 +1,20 @@
 package com.hi.api.controller;
 
-import com.hi.api.model.User;
 import com.hi.api.model.Transaction;
-import com.hi.api.service.PaymentService;
+import com.hi.api.model.User;
 import com.hi.api.service.AiDailyUsageService;
+import com.hi.api.service.PaymentService;
 import com.hi.api.service.SubscriptionAccessService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 import vn.payos.model.webhooks.Webhook;
 
 import java.util.LinkedHashMap;
@@ -41,20 +46,25 @@ public class PaymentController {
         try {
             String priceId = requestBody.get("priceId");
             if (priceId == null || priceId.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("success", false, "message", "Price ID (planType) là bắt buộc"));
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "message", "Price ID (planType) la bat buoc"
+                ));
             }
 
-            String checkoutUrl = paymentService.createCheckoutSession(user, priceId, origin);
+            PaymentService.CheckoutSessionResult checkout = paymentService.createCheckoutSession(user, priceId, origin);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
-            response.put("message", "Tạo phiên thanh toán thành công");
-            response.put("data", Map.of("checkoutUrl", checkoutUrl));
+            response.put("message", checkout.activated()
+                    ? "Da kich hoat goi Hi thanh cong"
+                    : "Tao phien thanh toan thanh cong");
+            response.put("data", checkout.toResponseData());
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Lỗi tạo phiên thanh toán: " + e.getMessage()));
+                    .body(Map.of("success", false, "message", "Loi tao phien thanh toan: " + e.getMessage()));
         }
     }
 
@@ -73,7 +83,6 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> getSubscription(@AuthenticationPrincipal User user) {
         SubscriptionAccessService.SubscriptionAccess access = subscriptionAccessService.getAccess(user.getId());
         AiDailyUsageService.Usage usage = aiDailyUsageService.current(user.getId(), access.aiDailyLimit());
-        boolean couplePremium = subscriptionAccessService.hasPremiumForCouple(user);
         User.SubscriptionInfo subscription = user.getSubscription() != null
                 ? user.getSubscription()
                 : new User.SubscriptionInfo();
@@ -84,12 +93,13 @@ public class PaymentController {
         data.put("activeUntil", access.activeUntil());
         data.put("currentPeriodEnd", access.activeUntil());
         data.put("cancelAtPeriodEnd", access.cancelAtPeriodEnd());
-        data.put("couplePremium", couplePremium);
+        data.put("couplePremium", subscriptionAccessService.hasPremiumForCouple(user));
+        data.put("sharedFromPartner", access.sharedFromPartner());
         data.put("entitlements", subscriptionAccessService.getEffectiveEntitlements(user));
         data.put("aiUsage", usage);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
-        response.put("message", "Lấy thông tin subscription thành công");
+        response.put("message", "Lay thong tin subscription thanh cong");
         response.put("data", data);
         return ResponseEntity.ok(response);
     }
@@ -99,7 +109,7 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> cancelSubscription(@AuthenticationPrincipal User user) {
         try {
             paymentService.cancelSubscription(user);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Đã dừng gia hạn gói Hi"));
+            return ResponseEntity.ok(Map.of("success", true, "message", "Da dung gia han goi Hi"));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
@@ -112,13 +122,12 @@ public class PaymentController {
             List<Transaction> history = paymentService.getPaymentHistory(user);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
-            response.put("message", "Lấy lịch sử thanh toán thành công");
+            response.put("message", "Lay lich su thanh toan thanh cong");
             response.put("data", history);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Lỗi lấy lịch sử thanh toán: " + e.getMessage()));
+                    .body(Map.of("success", false, "message", "Loi lay lich su thanh toan: " + e.getMessage()));
         }
     }
 }
-

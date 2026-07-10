@@ -16,6 +16,7 @@ import vn.payos.model.webhooks.WebhookData;
 
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -53,7 +54,7 @@ public class PaymentService {
         this.planPricingService = planPricingService;
     }
 
-    public String createCheckoutSession(User user, String priceId, String originUrl) throws Exception {
+    public CheckoutSessionResult createCheckoutSession(User user, String priceId, String originUrl) throws Exception {
         // Block double payment: if user already has an active subscription
         if (user.getSubscription() != null && "active".equalsIgnoreCase(user.getSubscription().getStatus())) {
             if (user.getSubscription().getCurrentPeriodEnd() != null && 
@@ -71,6 +72,18 @@ public class PaymentService {
         // We combine the current epoch seconds with a random 4-digit code.
         long orderCode = (System.currentTimeMillis() / 1000) * 10000 + (long) (Math.random() * 10000);
 
+        if (amount == 0) {
+            ensureSubscription(user);
+            user.getSubscription().setPayosOrderCode(orderCode);
+            user.getSubscription().setPlan(planName);
+
+            Transaction transaction = newTransaction(user, selectedPlan, resolved.campaignId(), orderCode, "completed");
+
+            Instant currentPeriodEnd = activateSubscription(user, transaction, amount, "payment.free_plan_activated");
+            log.info("Activated free sale plan for user: {}, orderCode: {}", user.getEmail(), orderCode);
+            return CheckoutSessionResult.activated(user.getSubscription(), currentPeriodEnd, planName, amount);
+        }
+
         String baseUrl = resolveReturnBaseUrl(originUrl);
 
         CreatePaymentLinkRequest request = CreatePaymentLinkRequest.builder()
@@ -84,9 +97,7 @@ public class PaymentService {
         CreatePaymentLinkResponse response = payOS.paymentRequests().create(request);
 
         // Update user state with the pending transaction code
-        if (user.getSubscription() == null) {
-            user.setSubscription(new User.SubscriptionInfo());
-        }
+        ensureSubscription(user);
         user.getSubscription().setPayosOrderCode(orderCode);
         user.getSubscription().setPlan(planName);
         user.getSubscription().setStatus("pending");
@@ -94,22 +105,11 @@ public class PaymentService {
         userRepository.save(user);
 
         // Create transaction log in history
-        Transaction transaction = new Transaction();
-        transaction.setUserId(user.getId());
-        transaction.setUserEmail(user.getEmail());
-        transaction.setOrderCode(orderCode);
-        transaction.setAmount(amount);
-        transaction.setBaseAmount(selectedPlan.basePrice());
-        transaction.setPaidAmount(amount);
-        transaction.setCampaignId(resolved.campaignId());
-        transaction.setPlanDisplayName(selectedPlan.name());
-        transaction.setPlan(planName);
-        transaction.setStatus("pending");
-        transaction.setDescription(selectedPlan.name());
+        Transaction transaction = newTransaction(user, selectedPlan, resolved.campaignId(), orderCode, "pending");
         transactionRepository.save(transaction);
 
         log.info("Created PayOS payment link for user: {}, orderCode: {}, url: {}", user.getEmail(), orderCode, response.getCheckoutUrl());
-        return response.getCheckoutUrl();
+        return CheckoutSessionResult.checkout(response.getCheckoutUrl());
     }
 
     private String resolveReturnBaseUrl(String originUrl) {
@@ -162,32 +162,7 @@ public class PaymentService {
                     throw new IllegalArgumentException("Giao dịch không còn ở trạng thái chờ");
                 }
 
-                // Update User Subscription State
-                user.getSubscription().setStatus("active");
-                String plan = user.getSubscription().getPlan();
-                int days = plan != null && plan.toLowerCase().contains("yearly") ? 365 : 30;
-                Instant currentPeriodEnd = Instant.now().plus(java.time.Duration.ofDays(days));
-                user.getSubscription().setCurrentPeriodEnd(currentPeriodEnd);
-                user.getSubscription().setCancelAtPeriodEnd(false);
-                userRepository.save(user);
-
-                // Update Transaction Status
-                transaction.setStatus("completed");
-                transactionRepository.save(transaction);
-
-                realtimeEventService.sendSubscription(user.getId(), "subscription.updated", Map.of(
-                        "subscription", user.getSubscription()
-                ));
-                realtimeEventService.sendSubscription(user.getId(), "payment.completed", Map.of(
-                        "orderCode", orderCode,
-                        "plan", plan,
-                        "amount", data.getAmount(),
-                        "currentPeriodEnd", currentPeriodEnd
-                ));
-                realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
-                        "reason", "payment.completed",
-                        "userId", user.getId()
-                ));
+                Instant currentPeriodEnd = activateSubscription(user, transaction, data.getAmount(), "payment.completed");
                 log.info("Successfully upgraded user {} to paid Hi plan. Expiration: {}", user.getEmail(), currentPeriodEnd);
             } else {
                 log.warn("User not found for PayOS orderCode: {}", orderCode);
@@ -229,6 +204,92 @@ public class PaymentService {
 
     public List<Transaction> getPaymentHistory(User user) {
         return transactionRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
+    }
+
+    private void ensureSubscription(User user) {
+        if (user.getSubscription() == null) {
+            user.setSubscription(new User.SubscriptionInfo());
+        }
+    }
+
+    private Transaction newTransaction(User user,
+                                       PlanPricingService.PlanPrice selectedPlan,
+                                       String campaignId,
+                                       long orderCode,
+                                       String status) {
+        Transaction transaction = new Transaction();
+        transaction.setUserId(user.getId());
+        transaction.setUserEmail(user.getEmail());
+        transaction.setOrderCode(orderCode);
+        transaction.setAmount(selectedPlan.currentPrice());
+        transaction.setBaseAmount(selectedPlan.basePrice());
+        transaction.setPaidAmount(selectedPlan.currentPrice());
+        transaction.setCampaignId(campaignId);
+        transaction.setPlanDisplayName(selectedPlan.name());
+        transaction.setPlan(selectedPlan.code());
+        transaction.setStatus(status);
+        transaction.setDescription(selectedPlan.name());
+        return transaction;
+    }
+
+    private Instant activateSubscription(User user, Transaction transaction, long amount, String eventType) {
+        ensureSubscription(user);
+        user.getSubscription().setStatus("active");
+        String plan = user.getSubscription().getPlan();
+        int days = plan != null && plan.toLowerCase().contains("yearly") ? 365 : 30;
+        Instant currentPeriodEnd = Instant.now().plus(java.time.Duration.ofDays(days));
+        user.getSubscription().setCurrentPeriodEnd(currentPeriodEnd);
+        user.getSubscription().setCancelAtPeriodEnd(false);
+        userRepository.save(user);
+
+        transaction.setStatus("completed");
+        transactionRepository.save(transaction);
+
+        realtimeEventService.sendSubscription(user.getId(), "subscription.updated", Map.of(
+                "subscription", user.getSubscription()
+        ));
+        realtimeEventService.sendSubscription(user.getId(), eventType, Map.of(
+                "orderCode", transaction.getOrderCode(),
+                "plan", plan,
+                "amount", amount,
+                "currentPeriodEnd", currentPeriodEnd
+        ));
+        realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
+                "reason", eventType,
+                "userId", user.getId()
+        ));
+        return currentPeriodEnd;
+    }
+
+    public record CheckoutSessionResult(
+            boolean activated,
+            String checkoutUrl,
+            User.SubscriptionInfo subscription,
+            Instant currentPeriodEnd,
+            String plan,
+            long amount
+    ) {
+        static CheckoutSessionResult checkout(String checkoutUrl) {
+            return new CheckoutSessionResult(false, checkoutUrl, null, null, null, 0);
+        }
+
+        static CheckoutSessionResult activated(User.SubscriptionInfo subscription,
+                                               Instant currentPeriodEnd,
+                                               String plan,
+                                               long amount) {
+            return new CheckoutSessionResult(true, null, subscription, currentPeriodEnd, plan, amount);
+        }
+
+        public Map<String, Object> toResponseData() {
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("activated", activated);
+            if (checkoutUrl != null) data.put("checkoutUrl", checkoutUrl);
+            if (subscription != null) data.put("subscription", subscription);
+            if (currentPeriodEnd != null) data.put("currentPeriodEnd", currentPeriodEnd);
+            if (plan != null) data.put("plan", plan);
+            data.put("amount", amount);
+            return data;
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 package com.hi.api.service;
 
+import com.hi.api.model.Transaction;
 import com.hi.api.model.User;
 import com.hi.api.repository.TransactionRepository;
 import com.hi.api.repository.UserRepository;
@@ -9,9 +10,13 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.time.Instant;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class PaymentServiceSecurityTest {
 
@@ -60,6 +65,48 @@ class PaymentServiceSecurityTest {
         assertEquals("active", user.getSubscription().getStatus());
         assertTrue(user.getSubscription().getCancelAtPeriodEnd());
         verify(userRepository).save(user);
+    }
+
+    @Test
+    void zeroAmountSaleActivatesSubscriptionWithoutPayos() throws Exception {
+        UserRepository userRepository = mock(UserRepository.class);
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        RealtimeEventService realtimeEventService = mock(RealtimeEventService.class);
+        PlanPricingService planPricingService = mock(PlanPricingService.class);
+        PaymentService service = new PaymentService(
+                userRepository,
+                transactionRepository,
+                null,
+                realtimeEventService,
+                mock(VoucherOrderService.class),
+                planPricingService
+        );
+        User user = new User();
+        user.setId("user-1");
+        user.setEmail("user@example.com");
+        PlanPricingService.PlanPrice plan = new PlanPricingService.PlanPrice(
+                "monthly",
+                "PREMIUM_MONTHLY",
+                "Hi Pro",
+                30,
+                49_000L,
+                0L,
+                100
+        );
+        when(planPricingService.resolvePlan("monthly"))
+                .thenReturn(new PlanPricingService.ResolvedPlan(plan, "sale-zero"));
+        when(transactionRepository.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        PaymentService.CheckoutSessionResult result = service.createCheckoutSession(user, "monthly", "https://hilover.space");
+
+        assertTrue(result.activated());
+        assertEquals(0L, result.amount());
+        assertEquals("PREMIUM_MONTHLY", user.getSubscription().getPlan());
+        assertEquals("active", user.getSubscription().getStatus());
+        assertNotNull(user.getSubscription().getCurrentPeriodEnd());
+        verify(userRepository).save(user);
+        verify(transactionRepository).save(any(Transaction.class));
+        verify(realtimeEventService, times(2)).sendSubscription(any(), any(), any());
     }
 
     private PaymentService service() {

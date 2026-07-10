@@ -433,7 +433,7 @@ public class AdminService {
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
 
         if ("DELETED".equalsIgnoreCase(user.getAccountStatus())) {
-            throw new IllegalArgumentException("Tài khoản đã bị xóa mềm, không thể đổi trạng thái.");
+            throw new IllegalArgumentException("Tài khoản đã bị xóa, không thể đổi trạng thái.");
         }
 
         String oldStatus = user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE";
@@ -457,7 +457,7 @@ public class AdminService {
         return user;
     }
 
-    public User softDeleteUser(String actorUserId, String targetUserId, String ipAddress) {
+    public void hardDeleteUser(String actorUserId, String targetUserId, String ipAddress) {
         if (actorUserId.equals(targetUserId)) {
             throw new IllegalArgumentException("Thao tác nguy hiểm: Bạn không thể tự xóa tài khoản của chính mình.");
         }
@@ -466,24 +466,27 @@ public class AdminService {
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
 
         String oldStatus = user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE";
-        user.setAccountStatus("DELETED");
-        user.setAccountStatusReason("Soft-deleted by admin");
-        user.setAccountStatusUpdatedAt(Instant.now());
-        user.setAccountStatusUpdatedBy(actorUserId);
-        userRepository.save(user);
+        if (user.getPartnerId() != null && !user.getPartnerId().isBlank()) {
+            userRepository.findById(user.getPartnerId())
+                    .filter(partner -> targetUserId.equals(partner.getPartnerId()))
+                    .ifPresent(partner -> {
+                        partner.setPartnerId(null);
+                        userRepository.save(partner);
+                    });
+        }
+        userRepository.delete(user);
 
         AdminAuditLog log = new AdminAuditLog();
         log.setActorUserId(actorUserId);
         log.setTargetUserId(targetUserId);
-        log.setAction("SOFT_DELETE_USER");
+        log.setAction("HARD_DELETE_USER");
         log.setEntityType("USER");
         log.setEntityId(targetUserId);
         log.setBeforeData(oldStatus);
-        log.setAfterData("DELETED");
+        log.setAfterData("REMOVED");
         log.setIpAddress(ipAddress);
         auditLogRepository.save(log);
 
-        return user;
     }
 
     public void sendUserNotification(String actorUserId, String targetUserId, String title, String message, String type, String ipAddress) {

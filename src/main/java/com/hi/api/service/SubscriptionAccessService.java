@@ -26,32 +26,21 @@ public class SubscriptionAccessService {
 
     public SubscriptionAccess getAccess(String userId) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+                .orElseThrow(() -> new IllegalArgumentException("Nguoi dung khong ton tai"));
         return getAccess(user);
     }
 
     public SubscriptionAccess getAccess(User user) {
-        User.SubscriptionInfo subscription = user.getSubscription();
-        String plan = normalizePlan(subscription != null ? subscription.getPlan() : null);
-        Instant activeUntil = subscription != null ? subscription.getCurrentPeriodEnd() : null;
-        String status = subscription != null && subscription.getStatus() != null
-                ? subscription.getStatus().trim().toLowerCase(Locale.ROOT)
-                : "";
-        boolean withinPaidPeriod = activeUntil != null && activeUntil.isAfter(Instant.now());
-        boolean premium = !"FREE".equals(plan)
-                && (("active".equals(status) || "trialing".equals(status)) && (activeUntil == null || withinPaidPeriod)
-                || "canceled".equals(status) && withinPaidPeriod);
-        String tier = premium ? "PREMIUM" : "FREE";
-        int aiDailyLimit = premium ? PREMIUM_AI_DAILY_LIMIT : FREE_AI_DAILY_LIMIT;
-        return new SubscriptionAccess(
-                tier,
-                premium ? plan : "FREE",
-                premium,
-                activeUntil,
-                subscription != null && Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd()),
-                aiDailyLimit,
-                entitlements(premium)
-        );
+        SubscriptionAccess ownAccess = getDirectAccess(user, false);
+        if (ownAccess.premium()) return ownAccess;
+        if (user.getPartnerId() == null || user.getPartnerId().isBlank()) return ownAccess;
+        return userRepository.findById(user.getPartnerId())
+                .filter(partner -> user.getId().equals(partner.getPartnerId()))
+                .map(partner -> {
+                    SubscriptionAccess partnerAccess = getDirectAccess(partner, true);
+                    return partnerAccess.premium() ? partnerAccess : ownAccess;
+                })
+                .orElse(ownAccess);
     }
 
     public boolean hasPremium(String userId) {
@@ -59,32 +48,25 @@ public class SubscriptionAccessService {
     }
 
     public boolean hasCouplePremium(User user, User partner) {
-        return getAccess(user).premium() || getAccess(partner).premium();
+        return getDirectAccess(user, false).premium() || getDirectAccess(partner, false).premium();
     }
 
     public boolean hasPremiumForCouple(User user) {
-        if (getAccess(user).premium()) return true;
+        if (getDirectAccess(user, false).premium()) return true;
         if (user.getPartnerId() == null || user.getPartnerId().isBlank()) return false;
         return userRepository.findById(user.getPartnerId())
                 .filter(partner -> user.getId().equals(partner.getPartnerId()))
-                .map(partner -> getAccess(partner).premium())
+                .map(partner -> getDirectAccess(partner, false).premium())
                 .orElse(false);
     }
 
     public Map<String, Boolean> getEffectiveEntitlements(User user) {
-        Map<String, Boolean> values = new LinkedHashMap<>(getAccess(user).entitlements());
-        boolean couplePremium = hasPremiumForCouple(user);
-        values.put("coupleDailyQuestions", couplePremium);
-        values.put("coupleQuestionHistory", couplePremium);
-        values.put("coupleConversation", couplePremium);
-        values.put("contextualPartnerCare", couplePremium);
-        values.put("partnerCareReminders", couplePremium);
-        return values;
+        return new LinkedHashMap<>(getAccess(user).entitlements());
     }
 
     public void requireCouplePremium(User user, User partner) {
         if (!hasCouplePremium(user, partner)) {
-            throw new AccessDeniedException("Tính năng cặp đôi nâng cao yêu cầu một trong hai tài khoản có Hi Pro hoặc Hi Max");
+            throw new AccessDeniedException("Tinh nang cap doi nang cao yeu cau mot trong hai tai khoan co Hi Pro hoac Hi Max");
         }
     }
 
@@ -115,6 +97,31 @@ public class SubscriptionAccessService {
         return "FREE";
     }
 
+    private SubscriptionAccess getDirectAccess(User user, boolean sharedFromPartner) {
+        User.SubscriptionInfo subscription = user.getSubscription();
+        String plan = normalizePlan(subscription != null ? subscription.getPlan() : null);
+        Instant activeUntil = subscription != null ? subscription.getCurrentPeriodEnd() : null;
+        String status = subscription != null && subscription.getStatus() != null
+                ? subscription.getStatus().trim().toLowerCase(Locale.ROOT)
+                : "";
+        boolean withinPaidPeriod = activeUntil != null && activeUntil.isAfter(Instant.now());
+        boolean premium = !"FREE".equals(plan)
+                && (("active".equals(status) || "trialing".equals(status)) && (activeUntil == null || withinPaidPeriod)
+                || "canceled".equals(status) && withinPaidPeriod);
+        String tier = premium ? "PREMIUM" : "FREE";
+        int aiDailyLimit = premium ? PREMIUM_AI_DAILY_LIMIT : FREE_AI_DAILY_LIMIT;
+        return new SubscriptionAccess(
+                tier,
+                premium ? plan : "FREE",
+                premium,
+                activeUntil,
+                subscription != null && Boolean.TRUE.equals(subscription.getCancelAtPeriodEnd()),
+                aiDailyLimit,
+                entitlements(premium),
+                premium && sharedFromPartner
+        );
+    }
+
     private Map<String, Boolean> entitlements(boolean premium) {
         Map<String, Boolean> values = new LinkedHashMap<>();
         values.put("fullHealthHistoryForAi", true);
@@ -141,7 +148,8 @@ public class SubscriptionAccessService {
             Instant activeUntil,
             boolean cancelAtPeriodEnd,
             int aiDailyLimit,
-            Map<String, Boolean> entitlements
+            Map<String, Boolean> entitlements,
+            boolean sharedFromPartner
     ) {
     }
 }
