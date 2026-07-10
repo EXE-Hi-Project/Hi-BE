@@ -31,7 +31,6 @@ public class EmailService {
     /**
      * Gửi mã OTP xác nhận quên mật khẩu dưới dạng giao diện HTML cao cấp
      */
-    @Async("mailExecutor")
     public void sendOtpEmail(String to, String name, String otp) {
         String displayName = name != null && !name.isBlank() ? name : "bạn";
         String heading = "Chào " + displayName + " thân thương,";
@@ -60,7 +59,6 @@ public class EmailService {
     /**
      * Gửi mã OTP xác thực tài khoản khi đăng ký dưới dạng giao diện HTML cao cấp
      */
-    @Async("mailExecutor")
     public void sendRegistrationOtpEmail(String to, String name, String otp) {
         String displayName = name != null && !name.isBlank() ? name : "bạn";
         String heading = "Chào mừng " + displayName + " đến với Hi,";

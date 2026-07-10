@@ -6,6 +6,7 @@ import com.google.api.client.http.javanet.NetHttpTransport;
 import com.google.api.client.json.gson.GsonFactory;
 import com.google.common.hash.Hashing;
 import com.hi.api.dto.request.*;
+import com.hi.api.exception.OtpDeliveryException;
 import com.hi.api.model.PasswordResetToken;
 import com.hi.api.model.User;
 import com.hi.api.repository.PasswordResetTokenRepository;
@@ -93,7 +94,15 @@ public class AuthService {
 
     public Map<String, Object> register(RegisterRequest req) {
         String email = req.getEmail().trim().toLowerCase();
-        if (userRepository.findByEmail(email).isPresent()) {
+        Optional<User> existingUser = userRepository.findByEmail(email);
+        if (existingUser.isPresent() && "PENDING_ACTIVATION".equalsIgnoreCase(existingUser.get().getAccountStatus())) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("email", email);
+            response.put("pendingActivation", true);
+            response.put("existingPendingAccount", true);
+            return response;
+        }
+        if (existingUser.isPresent()) {
             throw new IllegalArgumentException("Email đã được sử dụng");
         }
 
@@ -117,13 +126,7 @@ public class AuthService {
         String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
         String otpHash = hashToken(otp);
 
-        tokenRepository.save(newOtpToken(user.getId(), otpHash));
-
-        try {
-            emailService.sendRegistrationOtpEmail(user.getEmail(), user.getName(), otp);
-        } catch (Exception ex) {
-            log.error("[REGISTER] Gửi email kích hoạt OTP thất bại cho {}: {}", email, ex.getMessage());
-        }
+        saveAndSendOtp(user, otp, otpHash, true);
 
         Map<String, Object> response = new HashMap<>();
         response.put("email", email);
@@ -182,9 +185,22 @@ public class AuthService {
         }
         email = email.trim().toLowerCase();
 
-        final String finalGoogleId = googleId;
-        final String finalEmail = email;
-        User user = userRepository.findByGoogleIdOrEmail(finalGoogleId, finalEmail).orElse(null);
+        return authenticateGoogleUser(googleId, email, name, picture, payload.getEmailVerified());
+    }
+
+    Map<String, Object> authenticateGoogleUser(String googleId, String email, String name, String picture,
+                                                Boolean emailVerified) {
+        if (!Boolean.TRUE.equals(emailVerified)) {
+            throw new IllegalArgumentException("Email Google chưa được xác minh");
+        }
+
+        User userByGoogleId = userRepository.findByGoogleId(googleId).orElse(null);
+        User userByEmail = userRepository.findByEmail(email).orElse(null);
+        if (userByGoogleId != null && userByEmail != null
+                && !Objects.equals(userByGoogleId.getId(), userByEmail.getId())) {
+            throw new IllegalArgumentException("Tài khoản Google xung đột với email đã đăng ký");
+        }
+        User user = userByGoogleId != null ? userByGoogleId : userByEmail;
 
         if (user == null) {
             user = new User();
@@ -196,13 +212,23 @@ public class AuthService {
             user.setRole(getAdminEmails().contains(email) ? "admin" : "user");
             user.setPartnerCode(generatePartnerCode());
         } else {
-            assertAccountCanAuthenticate(user);
-            if (user.getGoogleId() == null)
+            String status = user.getAccountStatus() != null ? user.getAccountStatus() : "ACTIVE";
+            if ("LOCKED".equalsIgnoreCase(status) || "DELETED".equalsIgnoreCase(status)) {
+                assertAccountCanAuthenticate(user);
+            }
+            if (user.getGoogleId() != null && !user.getGoogleId().equals(googleId)) {
+                throw new IllegalArgumentException("Email này đã liên kết với một tài khoản Google khác");
+            }
+            if (user.getGoogleId() == null) {
                 user.setGoogleId(googleId);
+            }
             if (picture != null && !picture.isBlank() && (user.getAvatar() == null || user.getAvatar().isBlank())) {
                 user.setAvatar(picture);
             }
-            user.setAuthProvider("google");
+            if ("PENDING_ACTIVATION".equalsIgnoreCase(status)) {
+                user.setAccountStatus("ACTIVE");
+                invalidateOpenTokens(user.getId());
+            }
         }
 
         userRepository.save(user);
@@ -285,9 +311,15 @@ public class AuthService {
     public Map<String, Object> buildAuthPayload(User user) {
         assertAccountCanAuthenticate(user);
         Map<String, Object> payload = new HashMap<>();
-        payload.put("token", jwtUtil.generateToken(user.getId()));
         payload.put("user", sanitizeUser(user));
         return payload;
+    }
+
+    public String issueToken(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("User khong hop le");
+        }
+        return jwtUtil.generateToken(userId);
     }
 
     private Map<String, Object> sanitizeUser(User user) {
@@ -333,18 +365,7 @@ public class AuthService {
         String otpHash = hashToken(otp);
 
         enforceResendCooldown(user.getId());
-        invalidateOpenTokens(user.getId());
-        tokenRepository.save(newOtpToken(user.getId(), otpHash));
-
-        log.info("[FORGOT-PASSWORD] Đã lưu OTP token cho user: {}, gửi email...", email);
-        try {
-            emailService.sendOtpEmail(user.getEmail(), user.getName(), otp);
-        } catch (Exception ex) {
-            log.error("[FORGOT-PASSWORD] Gửi email OTP thất bại cho {}: {}", email, ex.getMessage(), ex);
-            throw new IllegalArgumentException(
-                    "Hệ thống gửi Email gặp sự cố (Chưa cấu hình Gmail App Password hoặc bị chặn). Vui lòng cấu hình MAIL_PASSWORD trong .env. Chi tiết lỗi: "
-                            + ex.getMessage());
-        }
+        saveAndSendOtp(user, otp, otpHash, false);
     }
 
     public String verifyOtp(VerifyOtpRequest req) {
@@ -411,15 +432,36 @@ public class AuthService {
         }
 
         enforceResendCooldown(user.getId());
-        invalidateOpenTokens(user.getId());
 
         // Sinh mã OTP mới
         String otp = String.format("%06d", new java.security.SecureRandom().nextInt(1_000_000));
         String otpHash = hashToken(otp);
 
-        tokenRepository.save(newOtpToken(user.getId(), otpHash));
+        saveAndSendOtp(user, otp, otpHash, true);
+    }
 
-        emailService.sendRegistrationOtpEmail(user.getEmail(), user.getName(), otp);
+    private void saveAndSendOtp(User user, String otp, String otpHash, boolean registrationOtp) {
+        List<PasswordResetToken> previousTokens = tokenRepository.findByUserIdAndUsedAtIsNull(user.getId());
+        PasswordResetToken newToken = tokenRepository.save(newOtpToken(user.getId(), otpHash));
+        try {
+            if (registrationOtp) {
+                emailService.sendRegistrationOtpEmail(user.getEmail(), user.getName(), otp);
+            } else {
+                emailService.sendOtpEmail(user.getEmail(), user.getName(), otp);
+            }
+        } catch (Exception ex) {
+            newToken.setUsedAt(Instant.now());
+            tokenRepository.save(newToken);
+            String trackingId = UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT);
+            log.error("[OTP-DELIVERY:{}] Gửi OTP thất bại cho {}: {}", trackingId, user.getEmail(), ex.getMessage(), ex);
+            throw new OtpDeliveryException(trackingId);
+        }
+
+        Instant now = Instant.now();
+        for (PasswordResetToken token : previousTokens) {
+            token.setUsedAt(now);
+            tokenRepository.save(token);
+        }
     }
 
     private PasswordResetToken newOtpToken(String userId, String otpHash) {

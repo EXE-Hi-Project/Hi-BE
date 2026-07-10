@@ -12,4 +12,5 @@ public interface CouplePlaceReactionRepository extends MongoRepository<CouplePla
     boolean existsByPlaceIdAndUserIdAndType(Long placeId, String userId, CouplePlaceReactionType type);
     long countByPlaceIdAndType(Long placeId, CouplePlaceReactionType type);
     List<CouplePlaceReaction> findByUserIdAndType(String userId, CouplePlaceReactionType type);
+    List<CouplePlaceReaction> findByPlaceIdInAndUserId(List<Long> placeIds, String userId);
 }

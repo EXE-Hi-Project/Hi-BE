@@ -1,8 +1,10 @@
 package com.hi.api.controller;
 
 import com.hi.api.dto.request.TrackEventRequest;
+import com.hi.api.exception.AnalyticsRateLimitExceededException;
 import com.hi.api.model.AnalyticsEvent;
 import com.hi.api.model.User;
+import com.hi.api.security.ClientIpResolver;
 import com.hi.api.service.AnalyticsService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -21,9 +23,11 @@ import java.util.Map;
 public class AnalyticsEventController {
 
     private final AnalyticsService analyticsService;
+    private final ClientIpResolver clientIpResolver;
 
-    public AnalyticsEventController(AnalyticsService analyticsService) {
+    public AnalyticsEventController(AnalyticsService analyticsService, ClientIpResolver clientIpResolver) {
         this.analyticsService = analyticsService;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @PostMapping("/track")
@@ -31,19 +35,18 @@ public class AnalyticsEventController {
             @Valid @RequestBody TrackEventRequest req,
             @AuthenticationPrincipal User user,
             HttpServletRequest httpRequest) {
-        AnalyticsEvent event = analyticsService.trackEvent(req, user, clientKey(httpRequest));
-        return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
-                "success", true,
-                "message", "Đã ghi nhận sự kiện thành công",
-                "id", event.getId()
-        ));
-    }
-
-    private String clientKey(HttpServletRequest request) {
-        String forwardedFor = request.getHeader("X-Forwarded-For");
-        if (forwardedFor != null && !forwardedFor.isBlank()) {
-            return forwardedFor.split(",")[0].trim();
+        try {
+            AnalyticsEvent event = analyticsService.trackEvent(req, user, clientIpResolver.resolve(httpRequest));
+            return ResponseEntity.status(HttpStatus.CREATED).body(Map.of(
+                    "success", true,
+                    "message", "Đã ghi nhận sự kiện thành công",
+                    "id", event.getId()
+            ));
+        } catch (AnalyticsRateLimitExceededException ex) {
+            return ResponseEntity.status(HttpStatus.ACCEPTED).body(Map.of(
+                    "success", true,
+                    "message", "Đã tiếp nhận sự kiện"
+            ));
         }
-        return request.getRemoteAddr();
     }
 }

@@ -24,7 +24,7 @@ public class GooglePlaceCache {
     private CouplePlaceCategory category;
     private List<CachedGooglePlace> places = new ArrayList<>();
 
-    @Indexed
+    @Indexed(name = "google_place_cache_expires_ttl", expireAfterSeconds = 0)
     private Instant expiresAt;
 
     @Data

@@ -1,11 +1,14 @@
 package com.hi.api.controller;
 
 import com.hi.api.dto.request.CreateVoucherCheckoutRequest;
+import com.hi.api.exception.GlobalExceptionHandler;
 import com.hi.api.model.User;
 import com.hi.api.model.VoucherOrder;
 import com.hi.api.service.VoucherOrderService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -19,11 +22,14 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/voucher-orders")
 @SecurityRequirement(name = "Bearer Authentication")
 public class VoucherOrderController {
+
+    private static final Logger log = LoggerFactory.getLogger(VoucherOrderController.class);
 
     private final VoucherOrderService voucherOrderService;
 
@@ -42,8 +48,7 @@ public class VoucherOrderController {
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", ex.getMessage()));
         } catch (Exception ex) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Khong tao duoc thanh toan voucher: " + ex.getMessage()));
+            return logAndReturnInternalError("VOUCHER_CHECKOUT", ex);
         }
     }
 
@@ -69,5 +74,11 @@ public class VoucherOrderController {
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", ex.getMessage()));
         }
+    }
+
+    private ResponseEntity<Map<String, Object>> logAndReturnInternalError(String code, Exception exception) {
+        String trackingId = UUID.randomUUID().toString();
+        log.error("[{}:{}] Voucher request failed", code, trackingId, exception);
+        return GlobalExceptionHandler.internalError(trackingId);
     }
 }

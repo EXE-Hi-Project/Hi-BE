@@ -1,12 +1,14 @@
 package com.hi.api.controller;
 
+import com.hi.api.exception.GlobalExceptionHandler;
 import com.hi.api.model.Transaction;
 import com.hi.api.model.User;
 import com.hi.api.service.AiDailyUsageService;
 import com.hi.api.service.PaymentService;
 import com.hi.api.service.SubscriptionAccessService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
-import org.springframework.http.HttpStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,10 +22,13 @@ import vn.payos.model.webhooks.Webhook;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/payments")
 public class PaymentController {
+
+    private static final Logger log = LoggerFactory.getLogger(PaymentController.class);
 
     private final PaymentService paymentService;
     private final SubscriptionAccessService subscriptionAccessService;
@@ -48,7 +53,7 @@ public class PaymentController {
             if (priceId == null || priceId.isEmpty()) {
                 return ResponseEntity.badRequest().body(Map.of(
                         "success", false,
-                        "message", "Price ID (planType) la bat buoc"
+                        "message", "Vui lòng chọn gói thanh toán"
                 ));
             }
 
@@ -56,15 +61,14 @@ public class PaymentController {
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
             response.put("message", checkout.activated()
-                    ? "Da kich hoat goi Hi thanh cong"
-                    : "Tao phien thanh toan thanh cong");
+                    ? "Đã kích hoạt gói Hi thành công"
+                    : "Tạo phiên thanh toán thành công");
             response.put("data", checkout.toResponseData());
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Loi tao phien thanh toan: " + e.getMessage()));
+            return logAndReturnInternalError("PAYMENT_CHECKOUT", e);
         }
     }
 
@@ -74,7 +78,9 @@ public class PaymentController {
             paymentService.handleWebhook(webhook);
             return ResponseEntity.ok("Received");
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Webhook Error: " + e.getMessage());
+            String trackingId = UUID.randomUUID().toString();
+            log.error("[PAYMENT_WEBHOOK:{}] Webhook handling failed", trackingId, e);
+            return ResponseEntity.badRequest().body("Webhook Error");
         }
     }
 
@@ -99,7 +105,7 @@ public class PaymentController {
         data.put("aiUsage", usage);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
-        response.put("message", "Lay thong tin subscription thanh cong");
+        response.put("message", "Lấy thông tin subscription thành công");
         response.put("data", data);
         return ResponseEntity.ok(response);
     }
@@ -109,7 +115,7 @@ public class PaymentController {
     public ResponseEntity<Map<String, Object>> cancelSubscription(@AuthenticationPrincipal User user) {
         try {
             paymentService.cancelSubscription(user);
-            return ResponseEntity.ok(Map.of("success", true, "message", "Da dung gia han goi Hi"));
+            return ResponseEntity.ok(Map.of("success", true, "message", "Đã dừng gia hạn gói Hi"));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
@@ -122,12 +128,17 @@ public class PaymentController {
             List<Transaction> history = paymentService.getPaymentHistory(user);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
-            response.put("message", "Lay lich su thanh toan thanh cong");
+            response.put("message", "Lấy lịch sử thanh toán thành công");
             response.put("data", history);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Loi lay lich su thanh toan: " + e.getMessage()));
+            return logAndReturnInternalError("PAYMENT_HISTORY", e);
         }
+    }
+
+    private ResponseEntity<Map<String, Object>> logAndReturnInternalError(String code, Exception exception) {
+        String trackingId = UUID.randomUUID().toString();
+        log.error("[{}:{}] Payment request failed", code, trackingId, exception);
+        return GlobalExceptionHandler.internalError(trackingId);
     }
 }

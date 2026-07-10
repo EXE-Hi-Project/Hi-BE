@@ -31,23 +31,16 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
-import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
-import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.text.Normalizer;
 import java.time.Duration;
 import java.time.Instant;
@@ -63,20 +56,17 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 public class CouplePlaceService {
 
-    private static final int DEFAULT_RADIUS_METERS = 3000;
-    private static final int MAX_RADIUS_METERS = 50000;
+    private static final int DEFAULT_RADIUS_METERS = 10000;
+    private static final int MAX_RADIUS_METERS = 20000;
     private static final int MAX_OSM_RESULTS = 25;
     private static final int MAX_ADDRESS_SUGGESTIONS = 8;
     private static final int MAX_ADDRESS_CANDIDATES = 16;
     private static final int MAX_PHOTOS_PER_PLACE = 5;
-    private static final long MAX_PHOTO_BYTES = 5L * 1024L * 1024L;
-    private static final List<String> ALLOWED_PHOTO_TYPES = List.of("image/jpeg", "image/png", "image/webp");
 
     private final CouplePlaceRepository placeRepository;
     private final CouplePlaceReviewRepository reviewRepository;
@@ -106,18 +96,6 @@ public class CouplePlaceService {
     @Value("${app.couple-places.report-hide-threshold:3}")
     private int reportHideThreshold;
 
-    @Value("${app.s3.user-media-bucket:}")
-    private String userMediaBucket;
-
-    @Value("${aws.region:us-east-1}")
-    private String awsRegion;
-
-    @Value("${aws.access-key-id:}")
-    private String awsAccessKeyId;
-
-    @Value("${aws.secret-access-key:}")
-    private String awsSecretAccessKey;
-
     public CouplePlaceService(CouplePlaceRepository placeRepository,
                               CouplePlaceReviewRepository reviewRepository,
                               CouplePlaceReactionRepository reactionRepository,
@@ -141,15 +119,16 @@ public class CouplePlaceService {
     public List<CouplePlace> nearby(User user, Double lat, Double lng, Integer radius, CouplePlaceCategory category, String sort) {
         validateCoordinates(lat, lng);
         int safeRadius = safeRadius(radius);
-        List<CouplePlace> allPublishedPlaces = placeRepository.findByStatus(CouplePlaceStatus.PUBLISHED).stream()
+        Bounds bounds = boundsAround(lat, lng, safeRadius);
+        String userId = user != null && user.getId() != null ? user.getId() : "__anonymous__";
+        List<CouplePlace> candidates = category == null
+                ? placeRepository.findVisibleWithinBounds(CouplePlaceStatus.PUBLISHED, userId, bounds.south(), bounds.north(), bounds.west(), bounds.east())
+                : placeRepository.findVisibleWithinBoundsAndCategory(CouplePlaceStatus.PUBLISHED, category, userId, bounds.south(), bounds.north(), bounds.west(), bounds.east());
+        List<CouplePlace> userPlaces = candidates.stream()
                 .filter(place -> canView(user, place))
-                .filter(place -> category == null || place.getCategory() == category)
                 .filter(place -> place.getLocation() != null && place.getLocation().getLat() != null && place.getLocation().getLng() != null)
                 .peek(place -> place.setDistanceMeters(distanceMeters(lat, lng, place.getLocation().getLat(), place.getLocation().getLng())))
-                .collect(Collectors.toCollection(ArrayList::new));
-
-        List<CouplePlace> userPlaces = allPublishedPlaces.stream()
-                .filter(place -> category == null || place.getDistanceMeters() <= safeRadius)
+                .filter(place -> place.getDistanceMeters() <= safeRadius)
                 .collect(Collectors.toCollection(ArrayList::new));
 
         List<CouplePlace> osmPlaces = fetchOsmNearby(lat, lng, safeRadius, category);
@@ -163,7 +142,7 @@ public class CouplePlaceService {
             }
         }
 
-        userPlaces.forEach(place -> enrich(place, user, false));
+        enrichAll(userPlaces, user, false);
         userPlaces.sort(comparator(sort));
         return userPlaces.stream().limit(60).toList();
     }
@@ -231,7 +210,22 @@ public class CouplePlaceService {
             return List.of();
         }
         Map<String, Map<String, Object>> suggestions = new LinkedHashMap<>();
-        placeRepository.findByStatus(CouplePlaceStatus.PUBLISHED).stream()
+        List<CouplePlace> internalCandidates;
+        if (isValidCoordinate(lat, lng)) {
+            Bounds bounds = boundsAround(lat, lng, MAX_RADIUS_METERS);
+            String userId = user != null && user.getId() != null ? user.getId() : "__anonymous__";
+            internalCandidates = placeRepository.findVisibleWithinBounds(
+                    CouplePlaceStatus.PUBLISHED,
+                    userId,
+                    bounds.south(),
+                    bounds.north(),
+                    bounds.west(),
+                    bounds.east()
+            );
+        } else {
+            internalCandidates = placeRepository.findByStatus(CouplePlaceStatus.PUBLISHED);
+        }
+        internalCandidates.stream()
                 .filter(place -> canView(user, place))
                 .map(place -> toInternalSearchSuggestion(place, lat, lng, cleaned))
                 .filter(Objects::nonNull)
@@ -630,13 +624,17 @@ public class CouplePlaceService {
     }
 
     public List<CouplePlace> savedPlaces(User user) {
-        return reactionRepository.findByUserIdAndType(user.getId(), CouplePlaceReactionType.SAVE).stream()
+        List<Long> savedPlaceIds = reactionRepository.findByUserIdAndType(user.getId(), CouplePlaceReactionType.SAVE).stream()
                 .map(CouplePlaceReaction::getPlaceId)
-                .map(placeRepository::findById)
-                .flatMap(Optional::stream)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        List<CouplePlace> places = placeRepository.findAllById(savedPlaceIds).stream()
                 .filter(place -> place.getStatus() == CouplePlaceStatus.PUBLISHED)
                 .filter(place -> canView(user, place))
-                .map(place -> enrich(place, user, false))
+                .collect(Collectors.toCollection(ArrayList::new));
+        enrichAll(places, user, false);
+        return places.stream()
                 .sorted(Comparator.comparing(CouplePlace::getUpdatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
@@ -665,82 +663,24 @@ public class CouplePlaceService {
 
     public Map<String, Object> presignPhoto(User user, Long placeId, PresignCouplePlacePhotoRequest request) {
         getAccessiblePlace(user, placeId);
-        if (userMediaBucket == null || userMediaBucket.isBlank()) {
-            throw new IllegalArgumentException("Chua cau hinh AWS_S3_USER_MEDIA_BUCKET");
-        }
-        if (awsAccessKeyId == null || awsAccessKeyId.isBlank() || awsSecretAccessKey == null || awsSecretAccessKey.isBlank()) {
-            throw new IllegalArgumentException("Chua cau hinh AWS credentials cho upload anh");
-        }
-        if (!ALLOWED_PHOTO_TYPES.contains(request.getContentType())) {
-            throw new IllegalArgumentException("Chi ho tro anh jpeg, png hoac webp");
-        }
-        if (request.getContentLength() == null || request.getContentLength() < 1 || request.getContentLength() > MAX_PHOTO_BYTES) {
-            throw new IllegalArgumentException("Anh toi da 5MB");
-        }
-        long currentPhotos = photoRepository.countByPlaceIdAndStatus(placeId, CouplePlaceStatus.PUBLISHED);
-        if (currentPhotos >= MAX_PHOTOS_PER_PLACE) {
-            throw new IllegalArgumentException("Moi dia diem toi da 5 anh trong v1");
-        }
-
-        String ext = extensionFor(request.getContentType(), request.getFileName());
-        String objectKey = "couple-places/" + placeId + "/" + user.getId() + "/" + UUID.randomUUID() + ext;
-        PutObjectRequest objectRequest = PutObjectRequest.builder()
-                .bucket(userMediaBucket)
-                .key(objectKey)
-                .contentType(request.getContentType())
-                .build();
-        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
-                .signatureDuration(Duration.ofMinutes(10))
-                .putObjectRequest(objectRequest)
-                .build();
-
-        try (S3Presigner presigner = S3Presigner.builder()
-                .region(Region.of(awsRegion))
-                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(awsAccessKeyId, awsSecretAccessKey)))
-                .build()) {
-            PresignedPutObjectRequest presigned = presigner.presignPutObject(presignRequest);
-            String publicUrl = "https://" + userMediaBucket + ".s3." + awsRegion + ".amazonaws.com/" + URLEncoder.encode(objectKey, StandardCharsets.UTF_8).replace("+", "%20").replace("%2F", "/");
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("uploadUrl", presigned.url().toString());
-            result.put("objectKey", objectKey);
-            result.put("publicUrl", publicUrl);
-            result.put("expiresInSeconds", 600);
-            return result;
-        }
+        throw new ResponseStatusException(HttpStatus.GONE, "Tính năng tải ảnh đang tạm tắt");
     }
 
     public CouplePlacePhoto confirmPhoto(User user, Long placeId, ConfirmCouplePlacePhotoRequest request) {
-        CouplePlace place = getAccessiblePlace(user, placeId);
-        long currentPhotos = photoRepository.countByPlaceIdAndStatus(placeId, CouplePlaceStatus.PUBLISHED);
-        if (currentPhotos >= MAX_PHOTOS_PER_PLACE) {
-            throw new IllegalArgumentException("Moi dia diem toi da 5 anh trong v1");
-        }
-        if (!ALLOWED_PHOTO_TYPES.contains(request.getContentType())) {
-            throw new IllegalArgumentException("Content type anh khong hop le");
-        }
-        CouplePlacePhoto photo = new CouplePlacePhoto();
-        photo.setId(sequenceService.next("couple_place_photos"));
-        photo.setPlaceId(placeId);
-        photo.setUserId(user.getId());
-        photo.setUserName(displayName(user));
-        photo.setObjectKey(request.getObjectKey());
-        photo.setUrl(request.getUrl());
-        photo.setContentType(request.getContentType());
-        photo.setStatus(CouplePlaceStatus.PUBLISHED);
-        CouplePlacePhoto saved = photoRepository.save(photo);
-        if (place.getCoverPhotoUrl() == null || place.getCoverPhotoUrl().isBlank()) {
-            place.setCoverPhotoUrl(saved.getUrl());
-            placeRepository.save(place);
-        }
-        return saved;
+        getAccessiblePlace(user, placeId);
+        throw new ResponseStatusException(HttpStatus.GONE, "Tính năng tải ảnh đang tạm tắt");
     }
 
     public List<AdminCouplePlaceResponse> adminPlaces() {
-        return placeRepository.findByStatusIn(List.of(CouplePlaceStatus.PUBLISHED, CouplePlaceStatus.HIDDEN, CouplePlaceStatus.ARCHIVED)).stream()
+        List<CouplePlace> places = placeRepository.findByStatusIn(List.of(CouplePlaceStatus.PUBLISHED, CouplePlaceStatus.HIDDEN, CouplePlaceStatus.ARCHIVED));
+        List<CouplePlace> publicPlaces = places.stream()
+                .filter(place -> effectiveVisibility(place) == CouplePlaceVisibility.PUBLIC)
+                .collect(Collectors.toCollection(ArrayList::new));
+        enrichAll(publicPlaces, null, false);
+        return places.stream()
                 .map(place -> {
                     boolean metadataOnly = effectiveVisibility(place) == CouplePlaceVisibility.COUPLE_PRIVATE;
-                    CouplePlace enriched = metadataOnly ? place : enrich(place, null, false);
-                    return AdminCouplePlaceResponse.from(enriched, metadataOnly);
+                    return AdminCouplePlaceResponse.from(place, metadataOnly);
                 })
                 .sorted(Comparator.comparing(AdminCouplePlaceResponse::getUpdatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
@@ -818,22 +758,49 @@ public class CouplePlaceService {
 
 
     private CouplePlace enrich(CouplePlace place, User user, boolean includeDetails) {
-        if (place.getId() == null) {
+        if (place == null || place.getId() == null) {
             return place;
         }
-        place.setLikedByMe(user != null && reactionRepository.existsByPlaceIdAndUserIdAndType(place.getId(), user.getId(), CouplePlaceReactionType.LIKE));
-        place.setDislikedByMe(user != null && reactionRepository.existsByPlaceIdAndUserIdAndType(place.getId(), user.getId(), CouplePlaceReactionType.DISLIKE));
-        place.setSavedByMe(user != null && reactionRepository.existsByPlaceIdAndUserIdAndType(place.getId(), user.getId(), CouplePlaceReactionType.SAVE));
-        place.setOwnedByMe(user != null && user.getId().equals(place.getCreatedBy()));
-        place.setVisibility(effectiveVisibility(place));
-        List<CouplePlacePhoto> photos = photoRepository.findByPlaceIdAndStatusOrderByCreatedAtDesc(place.getId(), CouplePlaceStatus.PUBLISHED);
-        place.setPhotos(photos);
-        if (includeDetails) {
-            place.setRecentReviews(reviewRepository.findByPlaceIdAndStatusOrderByCreatedAtDesc(place.getId(), CouplePlaceStatus.PUBLISHED).stream().limit(20).toList());
-        } else {
-            place.setRecentReviews(reviewRepository.findByPlaceIdAndStatusOrderByCreatedAtDesc(place.getId(), CouplePlaceStatus.PUBLISHED).stream().limit(3).toList());
-        }
+        enrichAll(List.of(place), user, includeDetails);
         return place;
+    }
+
+    private void enrichAll(List<CouplePlace> places, User user, boolean includeDetails) {
+        List<Long> placeIds = places.stream()
+                .map(CouplePlace::getId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (placeIds.isEmpty()) {
+            return;
+        }
+
+        Map<Long, Set<CouplePlaceReactionType>> reactionsByPlace = user != null && user.getId() != null
+                ? reactionRepository.findByPlaceIdInAndUserId(placeIds, user.getId()).stream()
+                        .collect(Collectors.groupingBy(
+                                CouplePlaceReaction::getPlaceId,
+                                Collectors.mapping(CouplePlaceReaction::getType, Collectors.toSet())
+                        ))
+                : Map.of();
+        Map<Long, List<CouplePlacePhoto>> photosByPlace = photoRepository.findByPlaceIdInAndStatusOrderByCreatedAtDesc(placeIds, CouplePlaceStatus.PUBLISHED).stream()
+                .collect(Collectors.groupingBy(CouplePlacePhoto::getPlaceId, LinkedHashMap::new, Collectors.toList()));
+        Map<Long, List<CouplePlaceReview>> reviewsByPlace = reviewRepository.findByPlaceIdInAndStatusOrderByCreatedAtDesc(placeIds, CouplePlaceStatus.PUBLISHED).stream()
+                .collect(Collectors.groupingBy(CouplePlaceReview::getPlaceId, LinkedHashMap::new, Collectors.toList()));
+        int reviewLimit = includeDetails ? 20 : 3;
+
+        for (CouplePlace place : places) {
+            if (place.getId() == null) {
+                continue;
+            }
+            Set<CouplePlaceReactionType> userReactions = reactionsByPlace.getOrDefault(place.getId(), Set.of());
+            place.setLikedByMe(userReactions.contains(CouplePlaceReactionType.LIKE));
+            place.setDislikedByMe(userReactions.contains(CouplePlaceReactionType.DISLIKE));
+            place.setSavedByMe(userReactions.contains(CouplePlaceReactionType.SAVE));
+            place.setOwnedByMe(user != null && user.getId() != null && user.getId().equals(place.getCreatedBy()));
+            place.setVisibility(effectiveVisibility(place));
+            place.setPhotos(photosByPlace.getOrDefault(place.getId(), List.of()).stream().limit(MAX_PHOTOS_PER_PLACE).toList());
+            place.setRecentReviews(reviewsByPlace.getOrDefault(place.getId(), List.of()).stream().limit(reviewLimit).toList());
+        }
     }
 
     private List<CouplePlace> fetchOsmNearby(double lat, double lng, int radius, CouplePlaceCategory category) {
@@ -849,7 +816,7 @@ public class CouplePlaceService {
         cache.setCacheKey(cacheKey);
         cache.setLat(roundCoordinate(lat));
         cache.setLng(roundCoordinate(lng));
-        cache.setRadius(radius);
+        cache.setRadius(radiusBucket(radius));
         cache.setCategory(category);
         cache.setPlaces(places);
         cache.setExpiresAt(Instant.now().plus(Duration.ofHours(Math.max(1, osmCacheTtlHours))));
@@ -1036,9 +1003,13 @@ public class CouplePlaceService {
     }
 
     private void validateCoordinates(Double lat, Double lng) {
-        if (lat == null || lng == null || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        if (!isValidCoordinate(lat, lng)) {
             throw new IllegalArgumentException("Toa do khong hop le");
         }
+    }
+
+    private boolean isValidCoordinate(Double lat, Double lng) {
+        return lat != null && lng != null && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
     }
 
     private int safeRadius(Integer radius) {
@@ -1046,6 +1017,18 @@ public class CouplePlaceService {
             return DEFAULT_RADIUS_METERS;
         }
         return Math.min(Math.max(radius, 100), MAX_RADIUS_METERS);
+    }
+
+    private Bounds boundsAround(double lat, double lng, int radiusMeters) {
+        double latDelta = radiusMeters / 111_320.0;
+        double cosLat = Math.cos(Math.toRadians(lat));
+        double lngDelta = Math.abs(cosLat) < 0.01 ? 180.0 : radiusMeters / (111_320.0 * Math.abs(cosLat));
+        return new Bounds(
+                Math.max(-90.0, lat - latDelta),
+                Math.min(90.0, lat + latDelta),
+                Math.max(-180.0, lng - lngDelta),
+                Math.min(180.0, lng + lngDelta)
+        );
     }
 
     private double distanceMeters(double lat1, double lng1, double lat2, double lng2) {
@@ -1059,12 +1042,18 @@ public class CouplePlaceService {
     }
 
     private String cacheKey(double lat, double lng, int radius, CouplePlaceCategory category) {
-        return "osm:" + roundCoordinate(lat) + ":" + roundCoordinate(lng) + ":" + radius + ":" + (category == null ? "ALL" : category.name());
+        return "osm:" + roundCoordinate(lat) + ":" + roundCoordinate(lng) + ":" + radiusBucket(radius) + ":" + (category == null ? "ALL" : category.name());
+    }
+
+    private int radiusBucket(int radius) {
+        return Math.max(1000, ((radius + 999) / 1000) * 1000);
     }
 
     private double roundCoordinate(double value) {
         return Math.round(value * 100.0) / 100.0;
     }
+
+    private record Bounds(double south, double north, double west, double east) {}
 
     private String overpassQuery(double lat, double lng, int radius, CouplePlaceCategory category) {
         List<String> filters = osmFilters(category);

@@ -23,7 +23,8 @@ import java.util.List;
 @CompoundIndexes({
         @CompoundIndex(name = "couple_place_status_category_idx", def = "{ 'status': 1, 'category': 1 }"),
         @CompoundIndex(name = "couple_place_google_idx", def = "{ 'googlePlaceId': 1 }", sparse = true),
-        @CompoundIndex(name = "couple_place_visibility_pair_idx", def = "{ 'visibility': 1, 'pairKey': 1 }")
+        @CompoundIndex(name = "couple_place_visibility_pair_idx", def = "{ 'visibility': 1, 'pairKey': 1 }"),
+        @CompoundIndex(name = "couple_place_nearby_idx", def = "{ 'status': 1, 'category': 1, 'visibility': 1, 'location.lat': 1, 'location.lng': 1 }")
 })
 public class CouplePlace {
 

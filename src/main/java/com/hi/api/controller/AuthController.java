@@ -1,14 +1,23 @@
 package com.hi.api.controller;
 
+import com.hi.api.dto.request.ForgotPasswordRequest;
 import com.hi.api.dto.request.GoogleAuthRequest;
 import com.hi.api.dto.request.LoginRequest;
 import com.hi.api.dto.request.RegisterRequest;
+import com.hi.api.dto.request.ResetPasswordRequest;
+import com.hi.api.dto.request.VerifyOtpRequest;
+import com.hi.api.exception.GlobalExceptionHandler;
+import com.hi.api.exception.OtpDeliveryException;
 import com.hi.api.model.User;
+import com.hi.api.security.ClientIpResolver;
 import com.hi.api.service.AuthRateLimitService;
 import com.hi.api.service.AuthService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
-import jakarta.validation.Valid;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -16,21 +25,28 @@ import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.web.csrf.CsrfToken;
-import org.springframework.web.bind.annotation.*;
-import com.hi.api.dto.request.ForgotPasswordRequest;
-import com.hi.api.dto.request.ResetPasswordRequest;
-import com.hi.api.dto.request.VerifyOtpRequest;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.time.Duration;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+
     private final AuthService authService;
     private final AuthRateLimitService authRateLimitService;
+    private final ClientIpResolver clientIpResolver;
 
     @Value("${app.auth.cookie.secure:true}")
     private boolean secureAuthCookie;
@@ -38,21 +54,33 @@ public class AuthController {
     @Value("${app.jwt.expiration-ms}")
     private long jwtExpirationMs;
 
-    public AuthController(AuthService authService, AuthRateLimitService authRateLimitService) {
+    @Autowired
+    public AuthController(AuthService authService, AuthRateLimitService authRateLimitService, ClientIpResolver clientIpResolver) {
         this.authService = authService;
         this.authRateLimitService = authRateLimitService;
+        this.clientIpResolver = clientIpResolver;
+    }
+
+    AuthController(AuthService authService, AuthRateLimitService authRateLimitService) {
+        this(authService, authRateLimitService, new ClientIpResolver(""));
     }
 
     @PostMapping("/register")
     public ResponseEntity<Map<String, Object>> register(@Valid @RequestBody RegisterRequest req,
                                                         HttpServletRequest request) {
-        authRateLimitService.check("register", req.getEmail(), clientIp(request), 5, 15);
-        Map<String, Object> payload = authService.register(req);
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("success", true);
-        response.put("message", "Đăng ký thành công");
-        response.put("data", payload);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        try {
+            authRateLimitService.check("register", req.getEmail(), clientIp(request), 5, 15);
+            Map<String, Object> payload = authService.register(req);
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Đăng ký thành công");
+            response.put("data", payload);
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (OtpDeliveryException e) {
+            return otpDeliveryFailure(e, req.getEmail());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
     }
 
     @PostMapping("/login")
@@ -112,8 +140,7 @@ public class AuthController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Lỗi xác thực Google: " + e.getMessage()));
+            return logAndReturnInternalError("GOOGLE_AUTH", e);
         }
     }
 
@@ -129,8 +156,7 @@ public class AuthController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("success", false, "message", "Lỗi xác thực Facebook: " + e.getMessage()));
+            return logAndReturnInternalError("FACEBOOK_AUTH", e);
         }
     }
 
@@ -145,6 +171,8 @@ public class AuthController {
             response.put("success", true);
             response.put("message", "Nếu email của bạn tồn tại trong hệ thống, mã OTP đã được gửi đến email của bạn.");
             return ResponseEntity.ok(response);
+        } catch (OtpDeliveryException e) {
+            return otpDeliveryFailure(e, req.getEmail());
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
@@ -210,6 +238,8 @@ public class AuthController {
             response.put("success", true);
             response.put("message", "Mã kích hoạt OTP mới đã được gửi đến email của bạn");
             return ResponseEntity.ok(response);
+        } catch (OtpDeliveryException e) {
+            return otpDeliveryFailure(e, email);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
@@ -220,17 +250,45 @@ public class AuthController {
     public ResponseEntity<Map<String, Object>> logout() {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, expiredAuthCookie().toString())
-                .body(Map.of("success", true, "message", "ÄÃ£ Ä‘Äƒng xuáº¥t"));
+                .body(Map.of("success", true, "message", "Đã đăng xuất"));
     }
 
     private ResponseEntity<Map<String, Object>> withAuthCookie(Map<String, Object> body, Map<String, Object> payload) {
-        Object token = payload.get("token");
-        if (!(token instanceof String tokenValue) || tokenValue.isBlank()) {
+        Object user = payload.get("user");
+        if (user instanceof User authUser && authUser.getId() != null && !authUser.getId().isBlank()) {
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.SET_COOKIE, authCookie(authService.issueToken(authUser.getId())).toString())
+                    .body(body);
+        }
+        if (!(user instanceof Map<?, ?> userMap)) {
             return ResponseEntity.ok(body);
         }
+        Object userId = userMap.get("_id");
+        if (!(userId instanceof String userIdValue) || userIdValue.isBlank()) {
+            return ResponseEntity.ok(body);
+        }
+        String tokenValue = authService.issueToken(userIdValue);
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, authCookie(tokenValue).toString())
                 .body(body);
+    }
+
+    private ResponseEntity<Map<String, Object>> otpDeliveryFailure(OtpDeliveryException exception, String email) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("code", "OTP_DELIVERY_FAILED");
+        data.put("email", email == null ? "" : email.trim().toLowerCase());
+        data.put("trackingId", exception.getTrackingId());
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", false);
+        response.put("message", exception.getMessage());
+        response.put("data", data);
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+    }
+
+    private ResponseEntity<Map<String, Object>> logAndReturnInternalError(String code, Exception exception) {
+        String trackingId = UUID.randomUUID().toString();
+        log.error("[{}:{}] Authentication request failed", code, trackingId, exception);
+        return GlobalExceptionHandler.internalError(trackingId);
     }
 
     private ResponseCookie authCookie(String token) {
@@ -254,10 +312,6 @@ public class AuthController {
     }
 
     private String clientIp(HttpServletRequest request) {
-        String forwardedFor = request.getHeader("X-Forwarded-For");
-        if (forwardedFor != null && !forwardedFor.isBlank()) {
-            return forwardedFor.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return clientIpResolver.resolve(request);
     }
 }

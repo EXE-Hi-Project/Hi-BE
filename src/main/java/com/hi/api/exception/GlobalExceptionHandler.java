@@ -2,17 +2,19 @@ package com.hi.api.exception;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
@@ -51,7 +53,7 @@ public class GlobalExceptionHandler {
                                 "remaining", 0,
                                 "resetsAt", ex.getResetsAt()
                         )
-                  ));
+                ));
     }
 
     @ExceptionHandler(AiServiceBusyException.class)
@@ -78,10 +80,31 @@ public class GlobalExceptionHandler {
                 .body(Map.of("success", false, "message", "Route không tồn tại"));
     }
 
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, Object>> handleResponseStatus(ResponseStatusException ex) {
+        String reason = ex.getReason() == null || ex.getReason().isBlank()
+                ? "Yêu cầu không thể xử lý"
+                : ex.getReason();
+        return ResponseEntity.status(ex.getStatusCode())
+                .body(Map.of("success", false, "message", reason));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneral(Exception ex) {
-        log.error("Unhandled exception", ex);
+        String trackingId = UUID.randomUUID().toString();
+        log.error("[UNHANDLED:{}] Unhandled exception", trackingId, ex);
+        return internalError(trackingId);
+    }
+
+    public static ResponseEntity<Map<String, Object>> internalError(String trackingId) {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of("success", false, "message", "Lỗi hệ thống: " + ex.getMessage()));
+                .body(Map.of(
+                        "success", false,
+                        "message", "Hệ thống đang bận. Vui lòng thử lại sau.",
+                        "data", Map.of(
+                                "code", "INTERNAL_ERROR",
+                                "trackingId", trackingId
+                        )
+                ));
     }
 }
