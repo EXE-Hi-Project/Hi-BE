@@ -144,15 +144,19 @@ public class AdminController {
     }
 
     @DeleteMapping("/users/{id}")
-    public ResponseEntity<Map<String, Object>> softDeleteUser(
+    public ResponseEntity<Map<String, Object>> hardDeleteUser(
             @AuthenticationPrincipal User admin,
             @PathVariable String id,
             HttpServletRequest request) {
 
         try {
             String ipAddress = request.getRemoteAddr();
-            User user = adminService.softDeleteUser(admin.getId(), id, ipAddress);
-            return ResponseEntity.ok(Map.of("success", true, "user", user));
+            adminService.hardDeleteUser(admin.getId(), id, ipAddress);
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Da xoa vinh vien tai khoan",
+                    "deletedUserId", id
+            ));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }

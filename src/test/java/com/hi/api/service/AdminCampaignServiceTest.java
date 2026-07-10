@@ -1,5 +1,6 @@
 package com.hi.api.service;
 
+import com.hi.api.model.AdminAuditLog;
 import com.hi.api.model.User;
 import com.hi.api.repository.*;
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,7 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -81,6 +83,44 @@ class AdminCampaignServiceTest {
                 ReflectionTestUtils.invokeMethod(service, "escapeCsv", "@SUM(A1:A2)"));
     }
 
+    @Test
+    void hardDeleteRemovesUserAndUnlinksPartner() {
+        UserRepository userRepository = mock(UserRepository.class);
+        AdminAuditLogRepository auditRepository = mock(AdminAuditLogRepository.class);
+        AdminService service = createService(
+                userRepository,
+                mock(MongoTemplate.class),
+                mock(NotificationService.class),
+                auditRepository
+        );
+        User target = new User();
+        target.setId("user-1");
+        target.setPartnerId("partner-1");
+        User partner = new User();
+        partner.setId("partner-1");
+        partner.setPartnerId("user-1");
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(target));
+        when(userRepository.findById("partner-1")).thenReturn(Optional.of(partner));
+
+        service.hardDeleteUser("admin-1", "user-1", "127.0.0.1");
+
+        verify(userRepository).delete(target);
+        verify(userRepository).save(partner);
+        assertEquals(null, partner.getPartnerId());
+        ArgumentCaptor<AdminAuditLog> auditCaptor = ArgumentCaptor.forClass(AdminAuditLog.class);
+        verify(auditRepository).save(auditCaptor.capture());
+        assertEquals("HARD_DELETE_USER", auditCaptor.getValue().getAction());
+        assertEquals("REMOVED", auditCaptor.getValue().getAfterData());
+    }
+
+    @Test
+    void hardDeleteRejectsSelfDelete() {
+        AdminService service = createService(mock(MongoTemplate.class), mock(NotificationService.class));
+
+        assertThrows(IllegalArgumentException.class,
+                () -> service.hardDeleteUser("admin-1", "admin-1", "127.0.0.1"));
+    }
+
     private AdminService createService(MongoTemplate mongoTemplate, NotificationService notificationService) {
         return createService(mongoTemplate, notificationService, mock(AdminAuditLogRepository.class));
     }
@@ -88,8 +128,15 @@ class AdminCampaignServiceTest {
     private AdminService createService(MongoTemplate mongoTemplate,
                                        NotificationService notificationService,
                                        AdminAuditLogRepository auditRepository) {
+        return createService(mock(UserRepository.class), mongoTemplate, notificationService, auditRepository);
+    }
+
+    private AdminService createService(UserRepository userRepository,
+                                       MongoTemplate mongoTemplate,
+                                       NotificationService notificationService,
+                                       AdminAuditLogRepository auditRepository) {
         return new AdminService(
-                mock(UserRepository.class),
+                userRepository,
                 mock(CycleRecordRepository.class),
                 mock(DailyLogSymptomRepository.class),
                 mock(NotificationRepository.class),

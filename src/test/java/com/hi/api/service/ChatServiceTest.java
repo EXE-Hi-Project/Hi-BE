@@ -45,7 +45,8 @@ class ChatServiceTest {
                         null,
                         false,
                         5,
-                        java.util.Map.of()
+                        java.util.Map.of(),
+                        false
                 )
         );
         when(aiDailyUsageService.reserve("user-1", 5))
