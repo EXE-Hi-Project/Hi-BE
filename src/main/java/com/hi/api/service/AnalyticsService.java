@@ -1,9 +1,11 @@
 package com.hi.api.service;
 
 import com.hi.api.dto.request.TrackEventRequest;
+import com.hi.api.exception.AnalyticsRateLimitExceededException;
 import com.hi.api.model.AnalyticsEvent;
 import com.hi.api.model.User;
 import com.hi.api.repository.AnalyticsEventRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
@@ -23,14 +25,26 @@ public class AnalyticsService {
     private static final int MAX_EVENTS_PER_MINUTE = 120;
     private static final int MAX_METADATA_KEYS = 12;
     private static final int MAX_METADATA_VALUE_LENGTH = 200;
+    private static final Set<String> ALLOWED_EVENT_TYPES = Set.of(
+            "PAGE_VIEW", "CLICK", "REGISTER", "ONBOARDING_COMPLETE", "LOGIN", "CTA_CLICK", "FORM_SUBMIT"
+    );
 
     private final AnalyticsEventRepository analyticsEventRepository;
     private final MongoTemplate mongoTemplate;
+    private final RateLimitService rateLimitService;
     private final Map<String, RateBucket> rateBuckets = new ConcurrentHashMap<>();
+
+    @Autowired
+    public AnalyticsService(AnalyticsEventRepository analyticsEventRepository, MongoTemplate mongoTemplate, RateLimitService rateLimitService) {
+        this.analyticsEventRepository = analyticsEventRepository;
+        this.mongoTemplate = mongoTemplate;
+        this.rateLimitService = rateLimitService;
+    }
 
     public AnalyticsService(AnalyticsEventRepository analyticsEventRepository, MongoTemplate mongoTemplate) {
         this.analyticsEventRepository = analyticsEventRepository;
         this.mongoTemplate = mongoTemplate;
+        this.rateLimitService = null;
     }
 
     public AnalyticsEvent trackEvent(TrackEventRequest req) {
@@ -42,7 +56,7 @@ public class AnalyticsService {
         AnalyticsEvent event = new AnalyticsEvent();
         event.setSessionId(trim(req.getSessionId(), 80));
         event.setUserId(authenticatedUser != null ? authenticatedUser.getId() : null);
-        event.setEventType(trim(req.getEventType(), 40));
+        event.setEventType(safeEventType(req.getEventType()));
         event.setTarget(trim(req.getTarget(), 160));
         event.setElementText(trim(req.getElementText(), 120));
         event.setMetadata(safeMetadata(req.getMetadata()));
@@ -51,6 +65,14 @@ public class AnalyticsService {
     }
 
     private void enforceWriteLimit(String sessionId, String clientKey) {
+        if (rateLimitService != null) {
+            String subject = (clientKey == null ? "unknown" : clientKey) + ":" + (sessionId == null ? "none" : sessionId);
+            if (!rateLimitService.tryConsume("analytics:track", subject, MAX_EVENTS_PER_MINUTE, Duration.ofMinutes(1))) {
+                throw new AnalyticsRateLimitExceededException();
+            }
+            return;
+        }
+
         String key = (clientKey == null ? "unknown" : clientKey) + ":" + (sessionId == null ? "none" : sessionId);
         long minute = Instant.now().getEpochSecond() / 60;
         RateBucket bucket = rateBuckets.compute(key, (ignored, existing) -> {
@@ -66,6 +88,15 @@ public class AnalyticsService {
         if (rateBuckets.size() > 10_000) {
             rateBuckets.entrySet().removeIf(entry -> entry.getValue().minute < minute);
         }
+    }
+
+    private String safeEventType(String eventType) {
+        String cleaned = trim(eventType, 40);
+        if (cleaned == null || cleaned.isBlank()) {
+            return "UNKNOWN";
+        }
+        String normalized = cleaned.trim().toUpperCase(Locale.ROOT);
+        return ALLOWED_EVENT_TYPES.contains(normalized) ? normalized : "OTHER";
     }
 
     private Map<String, Object> safeMetadata(Map<String, Object> input) {

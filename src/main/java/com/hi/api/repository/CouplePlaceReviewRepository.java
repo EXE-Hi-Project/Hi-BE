@@ -11,6 +11,7 @@ import java.util.Optional;
 
 public interface CouplePlaceReviewRepository extends MongoRepository<CouplePlaceReview, Long> {
     List<CouplePlaceReview> findByPlaceIdAndStatusOrderByCreatedAtDesc(Long placeId, CouplePlaceStatus status);
+    List<CouplePlaceReview> findByPlaceIdInAndStatusOrderByCreatedAtDesc(List<Long> placeIds, CouplePlaceStatus status);
     long countByPlaceIdAndStatus(Long placeId, CouplePlaceStatus status);
     Page<CouplePlaceReview> findByPlaceIdOrderByCreatedAtDesc(Long placeId, Pageable pageable);
     Page<CouplePlaceReview> findByPlaceIdAndStatusOrderByCreatedAtDesc(Long placeId, CouplePlaceStatus status, Pageable pageable);

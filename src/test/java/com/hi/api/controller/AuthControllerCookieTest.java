@@ -15,6 +15,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -29,7 +30,8 @@ class AuthControllerCookieTest {
         User user = new User();
         user.setId("user-1");
         when(authService.login(org.mockito.ArgumentMatchers.any(LoginRequest.class)))
-                .thenReturn(Map.of("token", "signed-jwt", "user", user));
+                .thenReturn(Map.of("user", user));
+        when(authService.issueToken("user-1")).thenReturn("signed-jwt");
 
         AuthController controller = new AuthController(authService, mock(AuthRateLimitService.class));
         ReflectionTestUtils.setField(controller, "secureAuthCookie", false);
@@ -39,13 +41,15 @@ class AuthControllerCookieTest {
         request.setEmail("user@example.com");
         request.setPassword("password123");
 
-        String cookie = controller.login(request, httpRequest()).getHeaders().getFirst(HttpHeaders.SET_COOKIE);
+        ResponseEntity<Map<String, Object>> response = controller.login(request, httpRequest());
+        String cookie = response.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
 
         assertNotNull(cookie);
         assertTrue(cookie.contains("hi_access_token=signed-jwt"));
         assertTrue(cookie.contains("HttpOnly"));
         assertTrue(cookie.contains("SameSite=Lax"));
         assertTrue(cookie.contains("Path=/"));
+        assertFalse(response.getBody().toString().contains("signed-jwt"));
     }
 
     @Test
@@ -55,9 +59,10 @@ class AuthControllerCookieTest {
         User user = new User();
         user.setId("user-1");
         when(authService.login(org.mockito.ArgumentMatchers.any(LoginRequest.class)))
-                .thenReturn(Map.of("token", "signed-jwt", "user", user));
+                .thenReturn(Map.of("user", user));
         when(authService.register(org.mockito.ArgumentMatchers.any(RegisterRequest.class)))
                 .thenReturn(Map.of("user", user));
+        when(authService.issueToken("user-1")).thenReturn("signed-jwt");
 
         AuthController controller = new AuthController(authService, rateLimitService);
         ReflectionTestUtils.setField(controller, "secureAuthCookie", false);

@@ -9,6 +9,7 @@ import com.hi.api.model.CouplePlaceStatus;
 import com.hi.api.model.CouplePlaceVisibility;
 import com.hi.api.model.User;
 import com.hi.api.dto.request.CreateCouplePlaceRequest;
+import com.hi.api.dto.request.PresignCouplePlacePhotoRequest;
 import com.hi.api.repository.CouplePlacePhotoRepository;
 import com.hi.api.repository.CouplePlaceReactionRepository;
 import com.hi.api.repository.CouplePlaceReportRepository;
@@ -24,6 +25,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -267,10 +269,25 @@ class CouplePlaceServiceTest {
         saved.setUserId("partner");
         saved.setType(CouplePlaceReactionType.SAVE);
         when(reactionRepository.findByUserIdAndType("partner", CouplePlaceReactionType.SAVE)).thenReturn(List.of(saved));
-        when(placeRepository.findById(42L)).thenReturn(Optional.of(privatePlace));
+        when(placeRepository.findAllById(List.of(42L))).thenReturn(List.of(privatePlace));
         when(partnerAccessService.isActivePair("owner", "partner")).thenReturn(false);
 
         assertTrue(service.savedPlaces(formerPartner).isEmpty());
+    }
+
+    @Test
+    void photoUploadIsDisabled() {
+        CouplePlace place = new CouplePlace();
+        place.setId(45L);
+        place.setVisibility(CouplePlaceVisibility.PUBLIC);
+        when(placeRepository.findById(45L)).thenReturn(Optional.of(place));
+
+        ResponseStatusException error = assertThrows(
+                ResponseStatusException.class,
+                () -> service.presignPhoto(user("user-1", null), 45L, new PresignCouplePlacePhotoRequest())
+        );
+
+        assertEquals(410, error.getStatusCode().value());
     }
 
     @Test
