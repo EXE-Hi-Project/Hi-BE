@@ -7,11 +7,13 @@ import com.hi.api.service.AuthRateLimitService;
 import com.hi.api.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.lang.reflect.Constructor;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -97,6 +99,17 @@ class AuthControllerCookieTest {
 
         assertEquals("csrf-value", data.get("csrfToken"));
         assertEquals("X-XSRF-TOKEN", data.get("headerName"));
+    }
+
+    @Test
+    void productionConstructorIsAutowiredForSpringBoot() throws NoSuchMethodException {
+        Constructor<AuthController> constructor = AuthController.class.getConstructor(
+                AuthService.class,
+                AuthRateLimitService.class,
+                com.hi.api.security.ClientIpResolver.class
+        );
+
+        assertTrue(constructor.isAnnotationPresent(Autowired.class));
     }
 
     private HttpServletRequest httpRequest() {

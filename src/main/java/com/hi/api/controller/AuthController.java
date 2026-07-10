@@ -17,6 +17,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -53,6 +54,7 @@ public class AuthController {
     @Value("${app.jwt.expiration-ms}")
     private long jwtExpirationMs;
 
+    @Autowired
     public AuthController(AuthService authService, AuthRateLimitService authRateLimitService, ClientIpResolver clientIpResolver) {
         this.authService = authService;
         this.authRateLimitService = authRateLimitService;
