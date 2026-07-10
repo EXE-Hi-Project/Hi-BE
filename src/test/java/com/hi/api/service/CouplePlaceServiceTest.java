@@ -350,6 +350,43 @@ class CouplePlaceServiceTest {
         verify(placeRepository).save(publicPlace);
     }
 
+    @Test
+    void userCannotReviewSamePlaceTwice() {
+        CouplePlace place = new CouplePlace();
+        place.setId(46L);
+        place.setVisibility(CouplePlaceVisibility.PUBLIC);
+        User reviewer = user("user-1", null);
+        when(placeRepository.findById(46L)).thenReturn(Optional.of(place));
+        when(reviewRepository.existsByPlaceIdAndUserId(46L, "user-1")).thenReturn(true);
+
+        IllegalArgumentException error = assertThrows(
+                IllegalArgumentException.class,
+                () -> service.addReview(reviewer, 46L, new com.hi.api.dto.request.CreateCouplePlaceReviewRequest())
+        );
+
+        assertEquals("Bạn đã review địa điểm này", error.getMessage());
+    }
+
+    @Test
+    void deletingPublicReviewRecalculatesPublishedRating() {
+        CouplePlace place = new CouplePlace();
+        place.setId(47L);
+        place.setVisibility(CouplePlaceVisibility.PUBLIC);
+        CouplePlaceReview review = new CouplePlaceReview();
+        review.setId(8L);
+        review.setPlaceId(47L);
+        when(placeRepository.findById(47L)).thenReturn(Optional.of(place));
+        when(reviewRepository.findByIdAndPlaceId(8L, 47L)).thenReturn(Optional.of(review));
+        when(reviewRepository.countByPlaceIdAndStatus(47L, CouplePlaceStatus.PUBLISHED)).thenReturn(0L);
+        when(reviewRepository.findByPlaceIdAndStatusOrderByCreatedAtDesc(47L, CouplePlaceStatus.PUBLISHED)).thenReturn(List.of());
+
+        service.deleteReview(47L, 8L);
+
+        verify(reviewRepository).delete(review);
+        assertEquals(0, place.getReviewCount());
+        verify(placeRepository).save(place);
+    }
+
     private CouplePlace privatePlace(Long id, String ownerId, String partnerId) {
         CouplePlace place = new CouplePlace();
         place.setId(id);

@@ -582,8 +582,11 @@ public class CouplePlaceService {
         return enrich(place, user, true);
     }
 
-    public CouplePlaceReview addReview(User user, Long placeId, CreateCouplePlaceReviewRequest request) {
+    public synchronized CouplePlaceReview addReview(User user, Long placeId, CreateCouplePlaceReviewRequest request) {
         CouplePlace place = getAccessiblePlace(user, placeId);
+        if (reviewRepository.existsByPlaceIdAndUserId(placeId, user.getId())) {
+            throw new IllegalArgumentException("Bạn đã review địa điểm này");
+        }
         CouplePlaceReview review = new CouplePlaceReview();
         review.setId(sequenceService.next("couple_place_reviews"));
         review.setPlaceId(placeId);
@@ -717,6 +720,15 @@ public class CouplePlaceService {
         return saved;
     }
 
+    public void deleteReview(Long placeId, Long reviewId) {
+        CouplePlace place = requirePublicAdminPlace(placeId);
+        CouplePlaceReview review = reviewRepository.findByIdAndPlaceId(reviewId, placeId)
+                .orElseThrow(() -> new IllegalArgumentException("Khong tim thay review"));
+        reviewRepository.delete(review);
+        recalculateStats(place);
+        placeRepository.save(place);
+    }
+
     public List<CouplePlaceReport> adminReports() {
         return reportRepository.findByStatusOrderByCreatedAtDesc(CouplePlaceReportStatus.OPEN).stream()
                 .filter(report -> placeRepository.findById(report.getPlaceId())
@@ -786,6 +798,11 @@ public class CouplePlaceService {
                 .collect(Collectors.groupingBy(CouplePlacePhoto::getPlaceId, LinkedHashMap::new, Collectors.toList()));
         Map<Long, List<CouplePlaceReview>> reviewsByPlace = reviewRepository.findByPlaceIdInAndStatusOrderByCreatedAtDesc(placeIds, CouplePlaceStatus.PUBLISHED).stream()
                 .collect(Collectors.groupingBy(CouplePlaceReview::getPlaceId, LinkedHashMap::new, Collectors.toList()));
+        Set<Long> reviewedPlaceIds = user != null && user.getId() != null
+                ? reviewRepository.findByPlaceIdInAndUserId(placeIds, user.getId()).stream()
+                        .map(CouplePlaceReview::getPlaceId)
+                        .collect(Collectors.toSet())
+                : Set.of();
         int reviewLimit = includeDetails ? 20 : 3;
 
         for (CouplePlace place : places) {
@@ -797,6 +814,7 @@ public class CouplePlaceService {
             place.setDislikedByMe(userReactions.contains(CouplePlaceReactionType.DISLIKE));
             place.setSavedByMe(userReactions.contains(CouplePlaceReactionType.SAVE));
             place.setOwnedByMe(user != null && user.getId() != null && user.getId().equals(place.getCreatedBy()));
+            place.setReviewedByMe(reviewedPlaceIds.contains(place.getId()));
             place.setVisibility(effectiveVisibility(place));
             place.setPhotos(photosByPlace.getOrDefault(place.getId(), List.of()).stream().limit(MAX_PHOTOS_PER_PLACE).toList());
             place.setRecentReviews(reviewsByPlace.getOrDefault(place.getId(), List.of()).stream().limit(reviewLimit).toList());

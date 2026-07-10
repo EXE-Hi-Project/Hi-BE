@@ -80,6 +80,9 @@ public class CouplePlace {
     private Boolean ownedByMe = false;
 
     @Transient
+    private Boolean reviewedByMe = false;
+
+    @Transient
     private List<CouplePlacePhoto> photos = new ArrayList<>();
 
     @Transient
