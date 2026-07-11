@@ -3,6 +3,7 @@ package com.hi.api.config;
 import com.hi.api.repository.UserRepository;
 import com.hi.api.security.JwtAuthFilter;
 import com.hi.api.security.JwtUtil;
+import com.hi.api.security.MaintenanceFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.config.Customizer;
@@ -69,7 +70,7 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain filterChain(HttpSecurity http, MaintenanceFilter maintenanceFilter) throws Exception {
         http
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
@@ -119,6 +120,7 @@ public class SecurityConfig {
                         "/api/auth/logout").permitAll();
                 auth.requestMatchers("/api/analytics/**").permitAll();
                 auth.requestMatchers(HttpMethod.GET, "/api/plans/pricing").permitAll();
+                auth.requestMatchers(HttpMethod.GET, "/api/system/maintenance").permitAll();
                 auth.requestMatchers("/api/payments/webhook").permitAll();
                 if (swaggerPublic) {
                     auth.requestMatchers(SWAGGER_PATHS).permitAll();
@@ -130,7 +132,8 @@ public class SecurityConfig {
                 auth.requestMatchers("/chat/**").permitAll();
                 auth.anyRequest().authenticated();
             })
-            .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class);
+            .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(maintenanceFilter, JwtAuthFilter.class);
 
         return http.build();
     }
