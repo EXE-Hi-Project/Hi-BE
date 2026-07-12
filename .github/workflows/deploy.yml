@@ -151,9 +151,14 @@ jobs:
 
             echo "🌱 Loading environment..."
             if [ -f .env ]; then
-              set -a
-              . ./.env
-              set +a
+              while IFS='=' read -r key value || [ -n "$key" ]; do
+                case "$key" in
+                  ''|'#'*) continue ;;
+                esac
+                if printf '%s' "$key" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$'; then
+                  export "$key=$value"
+                fi
+              done < .env
             fi
 
             echo "♻️  Restarting PM2 (Java)..."
