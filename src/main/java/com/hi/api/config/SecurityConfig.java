@@ -76,7 +76,8 @@ public class SecurityConfig {
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .ignoringRequestMatchers(
                         new AntPathRequestMatcher("/api/analytics/track", "POST"),
-                        new AntPathRequestMatcher("/api/payments/webhook", "POST")
+                        new AntPathRequestMatcher("/api/payments/webhook", "POST"),
+                        new AntPathRequestMatcher("/api/webhooks/resend", "POST")
                 )
             )
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
@@ -122,6 +123,7 @@ public class SecurityConfig {
                 auth.requestMatchers(HttpMethod.GET, "/api/plans/pricing").permitAll();
                 auth.requestMatchers(HttpMethod.GET, "/api/system/maintenance").permitAll();
                 auth.requestMatchers("/api/payments/webhook").permitAll();
+                auth.requestMatchers("/api/webhooks/resend").permitAll();
                 if (swaggerPublic) {
                     auth.requestMatchers(SWAGGER_PATHS).permitAll();
                 } else {

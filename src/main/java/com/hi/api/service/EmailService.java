@@ -1,6 +1,7 @@
 package com.hi.api.service;
 
 import jakarta.mail.internet.MimeMessage;
+import com.hi.api.model.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,18 +21,22 @@ public class EmailService {
     private static final Logger log = LoggerFactory.getLogger(EmailService.class);
 
     private final JavaMailSender mailSender;
+    private final ResendOtpEmailService resendOtpEmailService;
 
     @Value("${spring.mail.username}")
     private String fromEmail;
 
-    public EmailService(JavaMailSender mailSender) {
+    public EmailService(JavaMailSender mailSender, ResendOtpEmailService resendOtpEmailService) {
         this.mailSender = mailSender;
+        this.resendOtpEmailService = resendOtpEmailService;
     }
 
     /**
      * Gửi mã OTP xác nhận quên mật khẩu dưới dạng giao diện HTML cao cấp
      */
-    public void sendOtpEmail(String to, String name, String otp) {
+    public void sendOtpEmail(User user, String otp) {
+        String to = user.getEmail();
+        String name = user.getName();
         String displayName = name != null && !name.isBlank() ? name : "bạn";
         String heading = "Chào " + displayName + " thân thương,";
         String body = "<p style=\"margin: 0 0 15px 0;\">Hi nghe nói bạn đang cần lấy lại mật khẩu để vào trò chuyện cùng Hi đúng không nè? Đừng lo lắng nha, Hi đã chuẩn bị sẵn mã OTP cho bạn rồi đây:</p>" +
@@ -53,13 +58,15 @@ public class EmailService {
                 "Thương bạn,"
         );
 
-        sendRequiredEmail(to, "Mã OTP đặt lại mật khẩu - Hi App", html, true);
+        resendOtpEmailService.send(user, "PASSWORD_RESET", "Mã OTP đặt lại mật khẩu - Hi App", html);
     }
 
     /**
      * Gửi mã OTP xác thực tài khoản khi đăng ký dưới dạng giao diện HTML cao cấp
      */
-    public void sendRegistrationOtpEmail(String to, String name, String otp) {
+    public void sendRegistrationOtpEmail(User user, String otp) {
+        String to = user.getEmail();
+        String name = user.getName();
         String displayName = name != null && !name.isBlank() ? name : "bạn";
         String heading = "Chào mừng " + displayName + " đến với Hi,";
         String body = "<p style=\"margin: 0 0 15px 0;\">Hi vô cùng hạnh phúc khi được đồng hành cùng bạn trên hành trình chăm sóc sức khỏe sinh sản. Để kích hoạt tài khoản của bạn, vui lòng sử dụng mã OTP dưới đây nha:</p>" +
@@ -81,7 +88,7 @@ public class EmailService {
                 "Thương bạn,"
         );
 
-        sendRequiredEmail(to, "Xác minh tài khoản của bạn - Hi App", html, true);
+        resendOtpEmailService.send(user, "ACTIVATION", "Xác minh tài khoản của bạn - Hi App", html);
     }
 
     /**

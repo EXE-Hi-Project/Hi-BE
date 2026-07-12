@@ -25,7 +25,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.mock;
@@ -53,7 +55,7 @@ class AuthServiceOtpTest {
         assertEquals(true, result.get("pendingActivation"));
         assertEquals(true, result.get("existingPendingAccount"));
         verify(users, never()).save(any(User.class));
-        verify(emails, never()).sendRegistrationOtpEmail(any(), any(), any());
+        verify(emails, never()).sendRegistrationOtpEmail(any(), any());
     }
 
     @Test
@@ -70,7 +72,7 @@ class AuthServiceOtpTest {
         when(tokens.save(any(PasswordResetToken.class))).thenAnswer(invocation -> invocation.getArgument(0));
         EmailService emails = mock(EmailService.class);
         org.mockito.Mockito.doThrow(new RuntimeException("smtp unavailable"))
-                .when(emails).sendRegistrationOtpEmail(any(), any(), any());
+                .when(emails).sendRegistrationOtpEmail(any(), any());
         AuthService service = serviceFor(users, tokens, emails);
 
         assertThrows(OtpDeliveryException.class, () -> service.resendActivationOtp("user@example.com"));
@@ -146,6 +148,61 @@ class AuthServiceOtpTest {
                 .thenReturn(Optional.of(token));
 
         return serviceFor(userRepository, tokenRepository, mock(EmailService.class));
+    }
+
+    @Test
+    void forgotPasswordRejectsUnknownEmailWithoutCreatingOtp() {
+        UserRepository users = mock(UserRepository.class);
+        when(users.findByEmail("missing@example.com")).thenReturn(Optional.empty());
+        PasswordResetTokenRepository tokens = mock(PasswordResetTokenRepository.class);
+        EmailService emails = mock(EmailService.class);
+        AuthService service = serviceFor(users, tokens, emails);
+        com.hi.api.dto.request.ForgotPasswordRequest request = new com.hi.api.dto.request.ForgotPasswordRequest();
+        request.setEmail("missing@example.com");
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class, () -> service.forgotPassword(request));
+
+        assertEquals("Email không tồn tại trong hệ thống.", error.getMessage());
+        verify(tokens, never()).save(any(PasswordResetToken.class));
+        verify(emails, never()).sendOtpEmail(any(), any());
+    }
+
+    @Test
+    void googleAccountCanRequestOtpToCreatePassword() {
+        User googleUser = user("user-1", "user@example.com", "ACTIVE");
+        googleUser.setAuthProvider("google");
+        UserRepository users = mock(UserRepository.class);
+        when(users.findByEmail("user@example.com")).thenReturn(Optional.of(googleUser));
+        PasswordResetTokenRepository tokens = mock(PasswordResetTokenRepository.class);
+        when(tokens.findByUserIdAndUsedAtIsNull("user-1")).thenReturn(List.of());
+        when(tokens.save(any(PasswordResetToken.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        EmailService emails = mock(EmailService.class);
+        AuthService service = serviceFor(users, tokens, emails);
+        com.hi.api.dto.request.ForgotPasswordRequest request = new com.hi.api.dto.request.ForgotPasswordRequest();
+        request.setEmail("user@example.com");
+
+        service.forgotPassword(request);
+
+        verify(emails).sendOtpEmail(eq(googleUser), any());
+    }
+
+    @Test
+    void facebookAccountStillCannotRequestPasswordOtp() {
+        User facebookUser = user("user-1", "user@example.com", "ACTIVE");
+        facebookUser.setAuthProvider("facebook");
+        UserRepository users = mock(UserRepository.class);
+        when(users.findByEmail("user@example.com")).thenReturn(Optional.of(facebookUser));
+        AuthService service = serviceFor(users, mock(PasswordResetTokenRepository.class), mock(EmailService.class));
+        com.hi.api.dto.request.ForgotPasswordRequest request = new com.hi.api.dto.request.ForgotPasswordRequest();
+        request.setEmail("user@example.com");
+
+        assertThrows(IllegalArgumentException.class, () -> service.forgotPassword(request));
+    }
+
+    @Test
+    void otpDeliveryExceptionDoesNotEmbedTrackingIdInPublicMessage() {
+        OtpDeliveryException exception = new OtpDeliveryException("D97D1004");
+        assertFalse(exception.getMessage().contains("D97D1004"));
     }
 
     private AuthService serviceFor(UserRepository userRepository, PasswordResetTokenRepository tokenRepository,

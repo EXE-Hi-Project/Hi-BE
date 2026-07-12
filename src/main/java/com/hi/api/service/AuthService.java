@@ -347,12 +347,12 @@ public class AuthService {
         java.util.Optional<User> userOpt = userRepository.findByEmail(email);
         if (userOpt.isEmpty()) {
             log.info("[FORGOT-PASSWORD] Không tìm thấy user với email: {}", email);
-            return;
+            throw new IllegalArgumentException("Email không tồn tại trong hệ thống.");
         }
 
         User user = userOpt.get();
-        if (!"local".equals(user.getAuthProvider())) {
-            String provider = "google".equals(user.getAuthProvider()) ? "Google" : "Facebook";
+        if (!"local".equals(user.getAuthProvider()) && !"google".equals(user.getAuthProvider())) {
+            String provider = "facebook".equals(user.getAuthProvider()) ? "Facebook" : "mạng xã hội";
             log.warn("[FORGOT-PASSWORD] User {} đăng ký qua {} (không phải local) — không gửi OTP",
                     email, user.getAuthProvider());
             throw new IllegalArgumentException(
@@ -445,9 +445,9 @@ public class AuthService {
         PasswordResetToken newToken = tokenRepository.save(newOtpToken(user.getId(), otpHash));
         try {
             if (registrationOtp) {
-                emailService.sendRegistrationOtpEmail(user.getEmail(), user.getName(), otp);
+                emailService.sendRegistrationOtpEmail(user, otp);
             } else {
-                emailService.sendOtpEmail(user.getEmail(), user.getName(), otp);
+                emailService.sendOtpEmail(user, otp);
             }
         } catch (Exception ex) {
             newToken.setUsedAt(Instant.now());
