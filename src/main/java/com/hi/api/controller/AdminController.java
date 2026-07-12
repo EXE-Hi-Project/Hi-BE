@@ -11,6 +11,7 @@ import com.hi.api.service.AdminService;
 import com.hi.api.service.ReminderService;
 import com.hi.api.service.AnalyticsService;
 import com.hi.api.service.AdminSystemHealthService;
+import com.hi.api.service.OtpDeliveryService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -33,15 +34,18 @@ public class AdminController {
     private final ReminderService reminderService;
     private final AnalyticsService analyticsService;
     private final AdminSystemHealthService adminSystemHealthService;
+    private final OtpDeliveryService otpDeliveryService;
 
     public AdminController(AdminService adminService,
                            ReminderService reminderService,
                            AnalyticsService analyticsService,
-                           AdminSystemHealthService adminSystemHealthService) {
+                           AdminSystemHealthService adminSystemHealthService,
+                           OtpDeliveryService otpDeliveryService) {
         this.adminService = adminService;
         this.reminderService = reminderService;
         this.analyticsService = analyticsService;
         this.adminSystemHealthService = adminSystemHealthService;
+        this.otpDeliveryService = otpDeliveryService;
     }
 
     @GetMapping("/overview")
@@ -109,6 +113,11 @@ public class AdminController {
         Map<String, Object> data = adminService.getUsers(safePage, safeLimit, q, role, gender);
         data.put("success", true);
         return ResponseEntity.ok(data);
+    }
+
+    @GetMapping("/users/{id}/otp-deliveries")
+    public ResponseEntity<Map<String, Object>> getUserOtpDeliveries(@PathVariable String id) {
+        return ResponseEntity.ok(Map.of("success", true, "items", otpDeliveryService.history(id)));
     }
 
     @PatchMapping("/users/{id}/role")

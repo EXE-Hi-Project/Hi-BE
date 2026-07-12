@@ -1,10 +1,13 @@
 package com.hi.api.controller;
 
 import com.hi.api.dto.request.ConnectPartnerRequest;
+import com.hi.api.dto.request.ConfirmAvatarUploadRequest;
 import com.hi.api.dto.request.NotificationSettingsRequest;
 import com.hi.api.dto.request.PartnerSharingPreferencesRequest;
+import com.hi.api.dto.request.PresignAvatarUploadRequest;
 import com.hi.api.dto.request.UpdateProfileRequest;
 import com.hi.api.model.User;
+import com.hi.api.service.UserAvatarService;
 import com.hi.api.service.UserService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
@@ -29,9 +32,11 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
+    private final UserAvatarService userAvatarService;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService, UserAvatarService userAvatarService) {
         this.userService = userService;
+        this.userAvatarService = userAvatarService;
     }
 
     @GetMapping("/profile")
@@ -44,6 +49,21 @@ public class UserController {
             @AuthenticationPrincipal User user,
             @Valid @RequestBody UpdateProfileRequest req) {
         User updated = userService.updateProfile(user.getId(), req);
+        return ResponseEntity.ok(Map.of("success", true, "user", updated));
+    }
+
+    @PostMapping("/avatar/presign")
+    public ResponseEntity<Map<String, Object>> presignAvatar(
+            @AuthenticationPrincipal User user,
+            @Valid @RequestBody PresignAvatarUploadRequest request) {
+        return ResponseEntity.ok(Map.of("success", true, "data", userAvatarService.presignAvatar(user, request)));
+    }
+
+    @PostMapping("/avatar/confirm")
+    public ResponseEntity<Map<String, Object>> confirmAvatar(
+            @AuthenticationPrincipal User user,
+            @Valid @RequestBody ConfirmAvatarUploadRequest request) {
+        User updated = userAvatarService.confirmAvatar(user, request);
         return ResponseEntity.ok(Map.of("success", true, "user", updated));
     }
 

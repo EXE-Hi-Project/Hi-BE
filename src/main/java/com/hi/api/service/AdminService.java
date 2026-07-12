@@ -5,6 +5,7 @@ import com.hi.api.model.AffiliateRevenueEvent;
 import com.hi.api.model.User;
 import com.hi.api.model.Transaction;
 import com.hi.api.model.AiCostLog;
+import com.hi.api.model.OtpDelivery;
 import com.hi.api.dto.request.UpsertAiCostRequest;
 import com.hi.api.repository.*;
 import org.springframework.beans.factory.annotation.Value;
@@ -374,6 +375,16 @@ public class AdminService {
         query.fields().exclude("password");
 
         List<User> users = mongoTemplate.find(query, User.class);
+        Map<String, OtpDelivery> latestOtpDeliveries = new HashMap<>();
+        if (!users.isEmpty()) {
+            List<String> userIds = users.stream().map(User::getId).filter(Objects::nonNull).toList();
+            Query deliveriesQuery = new Query(Criteria.where("userId").in(userIds));
+            deliveriesQuery.with(Sort.by(Sort.Direction.DESC, "attemptedAt"));
+            for (OtpDelivery delivery : mongoTemplate.find(deliveriesQuery, OtpDelivery.class)) {
+                latestOtpDeliveries.putIfAbsent(delivery.getUserId(), delivery);
+            }
+            users.forEach(user -> user.setLatestOtpDelivery(latestOtpDeliveries.get(user.getId())));
+        }
 
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("items", users);
