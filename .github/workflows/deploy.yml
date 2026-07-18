@@ -22,6 +22,11 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           RESEND_WEBHOOK_SECRET: ${{ secrets.RESEND_WEBHOOK_SECRET }}
           RESEND_FROM_EMAIL: ${{ vars.RESEND_FROM_EMAIL || 'Hi Lover <no-reply@hilover.space>' }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_S3_USER_MEDIA_BUCKET: ${{ vars.AWS_S3_USER_MEDIA_BUCKET || 'hilover.space' }}
+          AWS_S3_REGION: ${{ vars.AWS_S3_REGION || 'ap-southeast-1' }}
+          AWS_S3_PUBLIC_BASE_URL: ${{ vars.AWS_S3_PUBLIC_BASE_URL || 'https://s3.ap-southeast-1.amazonaws.com/hilover.space' }}
           TOMTOM_SEARCH_API_KEY: ${{ secrets.TOMTOM_SEARCH_API_KEY || vars.TOMTOM_SEARCH_API_KEY }}
           PAYOS_CLIENT_ID: ${{ secrets.PAYOS_CLIENT_ID }}
           PAYOS_API_KEY: ${{ secrets.PAYOS_API_KEY }}
@@ -35,7 +40,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          envs: DEPLOY_BRANCH,GOOGLE_CLIENT_ID,MAIL_USERNAME,MAIL_PASSWORD,RESEND_API_KEY,RESEND_WEBHOOK_SECRET,RESEND_FROM_EMAIL,TOMTOM_SEARCH_API_KEY,PAYOS_CLIENT_ID,PAYOS_API_KEY,PAYOS_CHECKSUM_KEY,CLIENT_URL,PAYMENT_RETURN_ALLOWED_ORIGINS,FRONTEND_URL,FRONTEND_URLS
+          envs: DEPLOY_BRANCH,GOOGLE_CLIENT_ID,MAIL_USERNAME,MAIL_PASSWORD,RESEND_API_KEY,RESEND_WEBHOOK_SECRET,RESEND_FROM_EMAIL,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_S3_USER_MEDIA_BUCKET,AWS_S3_REGION,AWS_S3_PUBLIC_BASE_URL,TOMTOM_SEARCH_API_KEY,PAYOS_CLIENT_ID,PAYOS_API_KEY,PAYOS_CHECKSUM_KEY,CLIENT_URL,PAYMENT_RETURN_ALLOWED_ORIGINS,FRONTEND_URL,FRONTEND_URLS
           script: |
             set -e
             echo "📦 Checking repo..."
@@ -81,6 +86,11 @@ jobs:
             upsert_env "RESEND_API_KEY" "$RESEND_API_KEY"
             upsert_env "RESEND_WEBHOOK_SECRET" "$RESEND_WEBHOOK_SECRET"
             upsert_env "RESEND_FROM_EMAIL" "$RESEND_FROM_EMAIL"
+            upsert_env "AWS_ACCESS_KEY_ID" "$AWS_ACCESS_KEY_ID"
+            upsert_env "AWS_SECRET_ACCESS_KEY" "$AWS_SECRET_ACCESS_KEY"
+            upsert_env "AWS_S3_USER_MEDIA_BUCKET" "$AWS_S3_USER_MEDIA_BUCKET"
+            upsert_env "AWS_S3_REGION" "$AWS_S3_REGION"
+            upsert_env "AWS_S3_PUBLIC_BASE_URL" "$AWS_S3_PUBLIC_BASE_URL"
             TOMTOM_SEARCH_API_KEY_CURRENT=$(grep -E '^TOMTOM_SEARCH_API_KEY=' .env | tail -n 1 | cut -d= -f2- || true)
             if [ -n "$TOMTOM_SEARCH_API_KEY" ]; then
               upsert_env "TOMTOM_SEARCH_API_KEY" "$TOMTOM_SEARCH_API_KEY"
@@ -112,6 +122,12 @@ jobs:
             RESEND_FROM_EMAIL_CURRENT=$(grep -E '^RESEND_FROM_EMAIL=' .env | tail -n 1 | cut -d= -f2- || true)
             if [ -z "$RESEND_API_KEY_CURRENT" ] || [ -z "$RESEND_WEBHOOK_SECRET_CURRENT" ] || [ -z "$RESEND_FROM_EMAIL_CURRENT" ]; then
               echo "❌ Resend OTP configuration is missing in runtime .env"
+              exit 1
+            fi
+            AWS_S3_USER_MEDIA_BUCKET_CURRENT=$(grep -E '^AWS_S3_USER_MEDIA_BUCKET=' .env | tail -n 1 | cut -d= -f2- || true)
+            AWS_S3_REGION_CURRENT=$(grep -E '^AWS_S3_REGION=' .env | tail -n 1 | cut -d= -f2- || true)
+            if [ -z "$AWS_S3_USER_MEDIA_BUCKET_CURRENT" ] || [ -z "$AWS_S3_REGION_CURRENT" ]; then
+              echo "S3 user media configuration is missing in runtime .env"
               exit 1
             fi
             chmod 600 .env
