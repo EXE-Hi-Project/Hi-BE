@@ -146,7 +146,8 @@ class AdminCampaignServiceTest {
                 mongoTemplate,
                 notificationService,
                 mock(RealtimeEventService.class),
-                mock(AiCostLogRepository.class)
+                mock(AiCostLogRepository.class),
+                mock(SubscriptionAccessService.class)
         );
     }
 

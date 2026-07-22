@@ -137,6 +137,14 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
                 new SeedItem("Thèm ăn", SymptomCategory.PHYSICAL),
                 new SeedItem("Ngứa âm đạo", SymptomCategory.PHYSICAL),
                 new SeedItem("Khô âm đạo", SymptomCategory.PHYSICAL),
+                new SeedItem("Đau vùng chậu", SymptomCategory.PHYSICAL),
+                new SeedItem("Đau dữ dội", SymptomCategory.PHYSICAL),
+                new SeedItem("Chảy máu giữa kỳ", SymptomCategory.PHYSICAL),
+                new SeedItem("Đau khi quan hệ", SymptomCategory.PHYSICAL),
+                new SeedItem("Đau khi tiểu tiện", SymptomCategory.PHYSICAL),
+                new SeedItem("Đau khi đại tiện", SymptomCategory.PHYSICAL),
+                new SeedItem("Sốt", SymptomCategory.PHYSICAL),
+                new SeedItem("Choáng hoặc ngất", SymptomCategory.PHYSICAL),
                 new SeedItem("Bình tĩnh", SymptomCategory.EMOTIONAL),
                 new SeedItem("Vui vẻ", SymptomCategory.EMOTIONAL),
                 new SeedItem("Mạnh mẽ", SymptomCategory.EMOTIONAL),
@@ -158,7 +166,9 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
                 new SeedItem("Dạng đốm", SymptomCategory.FLUID),
                 new SeedItem("Bất thường", SymptomCategory.FLUID),
                 new SeedItem("Trắng, vón cục", SymptomCategory.FLUID),
-                new SeedItem("Xám", SymptomCategory.FLUID)
+                new SeedItem("Xám", SymptomCategory.FLUID),
+                new SeedItem("Dịch có mùi hôi", SymptomCategory.FLUID),
+                new SeedItem("Dịch đổi màu bất thường", SymptomCategory.FLUID)
         );
     }
 

@@ -47,6 +47,15 @@ public class SubscriptionAccessService {
         return getAccess(userId).premium();
     }
 
+    /**
+     * Returns only the subscription owned by this account. Partner-shared access
+     * is intentionally excluded so operational reports do not count one paid
+     * subscription twice.
+     */
+    public SubscriptionAccess getDirectAccess(User user) {
+        return getDirectAccess(user, false);
+    }
+
     public boolean hasCouplePremium(User user, User partner) {
         return getDirectAccess(user, false).premium() || getDirectAccess(partner, false).premium();
     }
