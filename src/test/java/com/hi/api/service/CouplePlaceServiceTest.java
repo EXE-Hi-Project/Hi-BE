@@ -76,6 +76,9 @@ class CouplePlaceServiceTest {
         ReflectionTestUtils.setField(service, "photonUrl", "https://photon.komoot.io/api");
         ReflectionTestUtils.setField(service, "tomTomSearchApiKey", "");
         ReflectionTestUtils.setField(service, "tomTomSearchUrl", "https://api.tomtom.com/search/2/search");
+        ReflectionTestUtils.setField(service, "vietMapApiKey", "");
+        ReflectionTestUtils.setField(service, "vietMapAutocompleteUrl", "https://maps.vietmap.vn/api/autocomplete/v4");
+        ReflectionTestUtils.setField(service, "vietMapPlaceUrl", "https://maps.vietmap.vn/api/place/v4");
     }
 
     @Test
@@ -137,6 +140,60 @@ class CouplePlaceServiceTest {
         assertEquals(106.7546603, suggestions.get(0).get("lng"));
         assertEquals(10.8553601, suggestions.get(0).get("lat"));
         assertEquals(asText(suggestions.get(0).get("displayName")).split(",")[0], suggestions.get(0).get("name"));
+    }
+
+    @Test
+    void exactVietnameseAlleyNumberRanksBeforeParentAddress() {
+        ReflectionTestUtils.setField(service, "tomTomSearchApiKey", "test-key");
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(Map.of("results", List.of(
+                        tomTomResult("parent", "UBND phuong Linh Tay", "763 Kha Van Can, Thu Duc", 106.75, 10.85),
+                        tomTomResult("exact", "Hem 763/60 Kha Van Can", "763/60 Kha Van Can, Thu Duc", 106.751, 10.851),
+                        tomTomResult("other-1", "Hem 21 Kha Van Can", "21 Kha Van Can, Thu Duc", 106.752, 10.852),
+                        tomTomResult("other-2", "Hem 4 Kha Van Can", "4 Kha Van Can, Thu Duc", 106.753, 10.853),
+                        tomTomResult("other-3", "Kha Van Can", "Kha Van Can, Thu Duc", 106.754, 10.854)
+                ))));
+
+        List<Map<String, Object>> suggestions = service.searchAddress("763/60 Kha Van Can", 10.85, 106.75);
+
+        assertFalse(suggestions.isEmpty());
+        assertEquals("tomtom:exact", suggestions.get(0).get("id"));
+        assertFalse(suggestions.get(0).containsKey("matchScore"));
+        assertFalse(suggestions.get(0).containsKey("providerRank"));
+    }
+
+    @Test
+    void vietMapAutocompleteIsResolvedOnlyAfterSelection() {
+        ReflectionTestUtils.setField(service, "vietMapApiKey", "vietmap-test-key");
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Object.class)))
+                .thenReturn(ResponseEntity.ok(List.of(Map.of(
+                        "ref_id", "auto:763-60",
+                        "name", "763/60 Kha Van Can",
+                        "address", "Linh Xuan, Thanh pho Ho Chi Minh",
+                        "distance", 1.2
+                ))));
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(Map.of("features", List.of())));
+
+        List<Map<String, Object>> suggestions = service.searchAddress("763/60 Kha Van Can", 10.85, 106.75);
+
+        assertEquals("VIETMAP", suggestions.get(0).get("source"));
+        assertEquals(true, suggestions.get(0).get("requiresResolve"));
+        assertEquals("auto:763-60", suggestions.get(0).get("refId"));
+        assertFalse(suggestions.get(0).containsKey("lat"));
+
+        when(restTemplate.exchange(anyString(), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+                .thenReturn(ResponseEntity.ok(Map.of(
+                        "name", "763/60 Kha Van Can",
+                        "address", "Linh Xuan, Thanh pho Ho Chi Minh",
+                        "lat", 10.8553601,
+                        "lng", 106.7546603
+                )));
+        Map<String, Object> resolved = service.resolveVietMapSuggestion("auto:763-60");
+
+        assertEquals(10.8553601, resolved.get("lat"));
+        assertEquals(106.7546603, resolved.get("lng"));
+        assertEquals(false, resolved.get("requiresResolve"));
     }
 
     @Test

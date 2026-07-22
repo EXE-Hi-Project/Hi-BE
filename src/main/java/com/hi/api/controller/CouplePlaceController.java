@@ -65,6 +65,14 @@ public class CouplePlaceController {
         return ResponseEntity.ok(Map.of("success", true, "suggestions", couplePlaceService.searchAddress(user, q, lat, lng)));
     }
 
+    @GetMapping("/search/resolve")
+    public ResponseEntity<Map<String, Object>> resolveSearchSuggestion(@RequestParam String refId) {
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "suggestion", couplePlaceService.resolveVietMapSuggestion(refId)
+        ));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<Map<String, Object>> get(@AuthenticationPrincipal User user, @PathVariable Long id) {
         return ResponseEntity.ok(Map.of("success", true, "place", couplePlaceService.get(user, id)));

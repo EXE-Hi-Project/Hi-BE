@@ -90,6 +90,15 @@ public class CouplePlaceService {
     @Value("${app.tomtom.search-url:https://api.tomtom.com/search/2/search}")
     private String tomTomSearchUrl;
 
+    @Value("${app.vietmap.api-key:}")
+    private String vietMapApiKey;
+
+    @Value("${app.vietmap.autocomplete-url:https://maps.vietmap.vn/api/autocomplete/v4}")
+    private String vietMapAutocompleteUrl;
+
+    @Value("${app.vietmap.place-url:https://maps.vietmap.vn/api/place/v4}")
+    private String vietMapPlaceUrl;
+
     @Value("${app.osm.cache-ttl-hours:24}")
     private int osmCacheTtlHours;
 
@@ -231,26 +240,84 @@ public class CouplePlaceService {
                 .filter(Objects::nonNull)
                 .forEach(suggestion -> addSearchSuggestion(suggestions, suggestion));
 
-        List<Map<String, Object>> tomTomResults = requestTomTomSearch(cleaned, lat, lng);
-        for (int index = 0; index < tomTomResults.size(); index++) {
-            addSearchSuggestion(
-                    suggestions,
-                    toTomTomSuggestion(tomTomResults.get(index), lat, lng, cleaned, index)
-            );
+        List<Map<String, Object>> vietMapResults = requestVietMapSearch(cleaned, lat, lng);
+        int externalResultCount = 0;
+        for (int index = 0; index < vietMapResults.size(); index++) {
+            if (addSearchSuggestion(suggestions, toVietMapSuggestion(vietMapResults.get(index), cleaned, index))) {
+                externalResultCount++;
+            }
         }
-        if (tomTomResults.size() < 5) {
+        if (externalResultCount < 5) {
+            List<Map<String, Object>> tomTomResults = requestTomTomSearch(cleaned, lat, lng);
+            for (int index = 0; index < tomTomResults.size(); index++) {
+                if (addSearchSuggestion(
+                        suggestions,
+                        toTomTomSuggestion(tomTomResults.get(index), lat, lng, cleaned, 100 + index)
+                )) {
+                    externalResultCount++;
+                }
+            }
+        }
+        if (externalResultCount < MAX_ADDRESS_SUGGESTIONS) {
             List<Map<String, Object>> features = requestPhotonSearch(cleaned, lat, lng);
             for (int index = 0; index < features.size(); index++) {
                 addSearchSuggestion(
                         suggestions,
-                        toPhotonSuggestion(features.get(index), lat, lng, cleaned, 100 + index)
+                        toPhotonSuggestion(features.get(index), lat, lng, cleaned, 200 + index)
                 );
             }
         }
         return suggestions.values().stream()
                 .sorted(searchSuggestionComparator())
                 .limit(MAX_ADDRESS_SUGGESTIONS)
+                .map(this::publicSearchSuggestion)
                 .toList();
+    }
+
+    public Map<String, Object> resolveVietMapSuggestion(String refId) {
+        String cleanedRefId = clean(refId);
+        if (cleanedRefId.isBlank() || cleanedRefId.length() > 500) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ma dia diem VietMap khong hop le");
+        }
+        if (clean(vietMapApiKey).isBlank()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Chua cau hinh VietMap");
+        }
+        try {
+            String url = UriComponentsBuilder.fromHttpUrl(vietMapPlaceUrl)
+                    .queryParam("apikey", vietMapApiKey)
+                    .queryParam("refid", cleanedRefId)
+                    .build()
+                    .encode()
+                    .toUriString();
+            ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.GET, HttpEntity.EMPTY, Map.class);
+            Map<String, Object> body = response.getBody();
+            Map<String, Object> place = nestedMap(body, "data");
+            if (place.isEmpty() && body != null) {
+                place = body;
+            }
+            Double resultLat = firstDouble(place, "lat", "latitude");
+            Double resultLng = firstDouble(place, "lng", "lon", "longitude");
+            if (!validSearchFocus(resultLat, resultLng)) {
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "VietMap khong tra ve toa do hop le");
+            }
+            String name = firstNonBlank(asString(place.get("name")), asString(place.get("display")), "Dia diem");
+            String address = firstNonBlank(asString(place.get("address")), asString(place.get("display")));
+            Map<String, Object> suggestion = new LinkedHashMap<>();
+            suggestion.put("id", "vietmap:" + cleanedRefId);
+            suggestion.put("name", name);
+            suggestion.put("address", address);
+            suggestion.put("displayName", joinNameAndAddress(name, address));
+            suggestion.put("lat", resultLat);
+            suggestion.put("lng", resultLng);
+            suggestion.put("type", firstNonBlank(asString(place.get("type")), asString(place.get("display_type"))));
+            suggestion.put("source", "VIETMAP");
+            suggestion.put("requiresResolve", false);
+            return publicSearchSuggestion(suggestion);
+        } catch (ResponseStatusException ex) {
+            throw ex;
+        } catch (RestClientException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Khong the lay toa do tu VietMap", ex);
+        }
     }
 
     private Map<String, Object> toInternalSearchSuggestion(CouplePlace place,
@@ -286,15 +353,17 @@ public class CouplePlaceService {
         return suggestion;
     }
 
-    private void addSearchSuggestion(Map<String, Map<String, Object>> suggestions, Map<String, Object> suggestion) {
-        if (suggestion.get("lat") == null || suggestion.get("lng") == null
+    private boolean addSearchSuggestion(Map<String, Map<String, Object>> suggestions, Map<String, Object> suggestion) {
+        boolean requiresResolve = Boolean.TRUE.equals(suggestion.get("requiresResolve"));
+        if ((!requiresResolve && (suggestion.get("lat") == null || suggestion.get("lng") == null))
+                || (requiresResolve && asString(suggestion.get("refId")).isBlank())
                 || asString(suggestion.get("displayName")).isBlank()) {
-            return;
+            return false;
         }
         if (isDuplicateSearchSuggestion(suggestions.values(), suggestion)) {
-            return;
+            return false;
         }
-        suggestions.putIfAbsent(suggestionKey(suggestion), suggestion);
+        return suggestions.putIfAbsent(suggestionKey(suggestion), suggestion) == null;
     }
 
     private boolean isDuplicateSearchSuggestion(Iterable<Map<String, Object>> existingSuggestions,
@@ -319,6 +388,68 @@ public class CouplePlaceService {
     private String searchSuggestionName(Map<String, Object> suggestion) {
         String name = firstNonBlank(asString(suggestion.get("name")), asString(suggestion.get("displayName")));
         return removeDiacritics(name).toLowerCase(Locale.ROOT).trim();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> requestVietMapSearch(String query, Double lat, Double lng) {
+        if (clean(vietMapApiKey).isBlank()) {
+            return List.of();
+        }
+        try {
+            UriComponentsBuilder urlBuilder = UriComponentsBuilder.fromHttpUrl(vietMapAutocompleteUrl)
+                    .queryParam("apikey", vietMapApiKey)
+                    .queryParam("text", query)
+                    .queryParam("display_type", 5);
+            if (validSearchFocus(lat, lng)) {
+                urlBuilder.queryParam("focus", lat + "," + lng);
+            }
+            ResponseEntity<Object> response = restTemplate.exchange(
+                    urlBuilder.build().encode().toUriString(),
+                    HttpMethod.GET,
+                    HttpEntity.EMPTY,
+                    Object.class
+            );
+            Object body = response.getBody();
+            Object rawItems = body;
+            if (body instanceof Map<?, ?> bodyMap) {
+                rawItems = bodyMap.get("data") != null ? bodyMap.get("data") : bodyMap.get("results");
+            }
+            if (!(rawItems instanceof List<?> items)) {
+                return List.of();
+            }
+            return items.stream()
+                    .filter(Map.class::isInstance)
+                    .map(item -> (Map<String, Object>) item)
+                    .limit(MAX_ADDRESS_CANDIDATES)
+                    .toList();
+        } catch (RestClientException ex) {
+            return List.of();
+        }
+    }
+
+    private Map<String, Object> toVietMapSuggestion(Map<String, Object> result,
+                                                     String originalQuery,
+                                                     int providerRank) {
+        String refId = firstNonBlank(asString(result.get("ref_id")), asString(result.get("refId")));
+        String name = firstNonBlank(asString(result.get("name")), asString(result.get("display")), asString(result.get("address")), "Dia diem");
+        String address = firstNonBlank(asString(result.get("address")), asString(result.get("display")));
+        String displayName = joinNameAndAddress(name, address);
+        Map<String, Object> suggestion = new LinkedHashMap<>();
+        suggestion.put("id", "vietmap:" + refId);
+        suggestion.put("name", name);
+        suggestion.put("address", address);
+        suggestion.put("displayName", displayName);
+        suggestion.put("type", firstNonBlank(asString(result.get("type")), asString(result.get("display_type"))));
+        suggestion.put("source", "VIETMAP");
+        suggestion.put("refId", refId);
+        suggestion.put("requiresResolve", true);
+        suggestion.put("matchScore", matchScore(originalQuery, displayName));
+        suggestion.put("providerRank", providerRank);
+        Double distanceKm = asDouble(result.get("distance"));
+        if (distanceKm != null) {
+            suggestion.put("distanceMeters", distanceKm * 1000);
+        }
+        return suggestion;
     }
 
     @SuppressWarnings("unchecked")
@@ -550,20 +681,42 @@ public class CouplePlaceService {
                 }).reversed());
     }
 
+    private Map<String, Object> publicSearchSuggestion(Map<String, Object> suggestion) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (String field : List.of("id", "name", "address", "displayName", "lat", "lng", "type", "source", "visibility", "distanceMeters", "refId", "requiresResolve")) {
+            Object value = suggestion.get(field);
+            if (value != null && (!(value instanceof String text) || !text.isBlank())) {
+                result.put(field, value);
+            }
+        }
+        result.putIfAbsent("requiresResolve", false);
+        return result;
+    }
+
     private int matchScore(String query, String displayName) {
-        String normalizedQuery = removeDiacritics(query).toLowerCase(Locale.ROOT);
-        String normalizedName = removeDiacritics(displayName).toLowerCase(Locale.ROOT);
+        String normalizedQuery = normalizeSearchText(query);
+        String normalizedName = normalizeSearchText(displayName);
         int score = 0;
         if (normalizedName.startsWith(normalizedQuery)) {
             score += 40;
         } else if (normalizedName.contains(normalizedQuery)) {
             score += 20;
         }
-        Matcher houseMatcher = Pattern.compile("^(\\d+)").matcher(normalizedQuery);
-        if (houseMatcher.find() && normalizedName.contains(houseMatcher.group(1))) {
-            score += 30;
+        String queryHouseNumber = firstAddressNumber(normalizedQuery);
+        String resultHouseNumber = firstAddressNumber(normalizedName);
+        if (!queryHouseNumber.isBlank()) {
+            if (normalizedName.contains(queryHouseNumber)) {
+                score += queryHouseNumber.matches(".*[/.-].*") ? 140 : 55;
+            } else if (!resultHouseNumber.isBlank()) {
+                String queryParent = queryHouseNumber.split("[/.-]")[0];
+                if (resultHouseNumber.equals(queryParent)) {
+                    score += 10;
+                } else {
+                    score -= 60;
+                }
+            }
         }
-        for (String token : normalizedQuery.replace('/', ' ').split("\\s+")) {
+        for (String token : normalizedQuery.replaceAll("[/.-]", " ").split("\\s+")) {
             if (token.length() >= 2 && normalizedName.contains(token)) {
                 score += 8;
             }
@@ -572,6 +725,32 @@ public class CouplePlaceService {
             score += 5;
         }
         return score;
+    }
+
+    private String normalizeSearchText(String value) {
+        return collapseSpaces(removeDiacritics(clean(value)).toLowerCase(Locale.ROOT)
+                .replaceAll("\\s*([/.-])\\s*", "$1"));
+    }
+
+    private String firstAddressNumber(String value) {
+        Matcher matcher = Pattern.compile("(?<!\\d)(\\d+[a-z]?(?:[/.-]\\d+[a-z]?)*)(?!\\d)").matcher(value);
+        return matcher.find() ? matcher.group(1) : "";
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> nestedMap(Map<String, Object> value, String key) {
+        if (value != null && value.get(key) instanceof Map<?, ?> nested) {
+            return (Map<String, Object>) nested;
+        }
+        return Map.of();
+    }
+
+    private Double firstDouble(Map<String, Object> value, String... keys) {
+        for (String key : keys) {
+            Double result = asDouble(value.get(key));
+            if (result != null) return result;
+        }
+        return null;
     }
 
     public CouplePlace get(User user, Long id) {
