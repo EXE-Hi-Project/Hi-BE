@@ -12,8 +12,21 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SymptomDictionarySeederTest {
+
+    @Test
+    void defaultItemsIncludeCycleSafetySignals() {
+        var names = SymptomDictionarySeeder.defaultItems().stream()
+                .map(SymptomDictionarySeeder.SeedItem::name)
+                .toList();
+
+        assertTrue(names.contains("Đau dữ dội"));
+        assertTrue(names.contains("Chảy máu giữa kỳ"));
+        assertTrue(names.contains("Choáng hoặc ngất"));
+        assertTrue(names.contains("Dịch có mùi hôi"));
+    }
 
     @Test
     void runningSeederAgainDoesNotCreateDuplicateItems() {

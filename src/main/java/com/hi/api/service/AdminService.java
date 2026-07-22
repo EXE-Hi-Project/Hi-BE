@@ -39,6 +39,7 @@ public class AdminService {
     private final NotificationService notificationService;
     private final RealtimeEventService realtimeEventService;
     private final AiCostLogRepository aiCostLogRepository;
+    private final SubscriptionAccessService subscriptionAccessService;
 
     @Value("${FINANCE_PAID_USER_RATE:0.15}")
     private double paidUserRate;
@@ -67,7 +68,8 @@ public class AdminService {
                         TransactionRepository transactionRepository, MongoTemplate mongoTemplate,
                         NotificationService notificationService,
                         RealtimeEventService realtimeEventService,
-                        AiCostLogRepository aiCostLogRepository) {
+                        AiCostLogRepository aiCostLogRepository,
+                        SubscriptionAccessService subscriptionAccessService) {
         this.userRepository = userRepository;
         this.cycleRecordRepository = cycleRecordRepository;
         this.dailyLogSymptomRepository = dailyLogSymptomRepository;
@@ -79,6 +81,7 @@ public class AdminService {
         this.notificationService = notificationService;
         this.realtimeEventService = realtimeEventService;
         this.aiCostLogRepository = aiCostLogRepository;
+        this.subscriptionAccessService = subscriptionAccessService;
     }
 
     private record MonthInfo(int year, int month, String key, String label, Instant startDate) {}
@@ -111,6 +114,10 @@ public class AdminService {
         long notificationsTotal = notificationRepository.count();
         long unreadNotifications = notificationRepository.countByRead(false);
         long chatMessagesTotal = chatRepository.count();
+
+        List<User> activeRegularUsers = activeRegularUsers();
+        Map<String, Object> subscriptionStats = buildSubscriptionStats(activeRegularUsers);
+        Map<String, Object> coupleStats = buildCoupleStats(activeRegularUsers);
 
         // Recent users
         List<User> recentUsers = userRepository.findTop5ByOrderByCreatedAtDesc();
@@ -199,6 +206,8 @@ public class AdminService {
         result.put("financialReport", financialReport);
         result.put("monthlyFinancials", monthlyFinancials);
         result.put("recentUsers", recentUsers);
+        result.put("subscriptionStats", subscriptionStats);
+        result.put("coupleStats", coupleStats);
 
         // PayOS totals stay in Mongo; only the latest 50 rows are materialized.
         long totalOrdersCount = transactionRepository.count();
@@ -315,6 +324,69 @@ public class AdminService {
         result.put("hourlyChatTraffic", hourlyChatTraffic);
 
         return result;
+    }
+
+    private List<User> activeRegularUsers() {
+        Criteria activeStatus = new Criteria().orOperator(
+                Criteria.where("accountStatus").exists(false),
+                Criteria.where("accountStatus").is(null),
+                Criteria.where("accountStatus").is("ACTIVE")
+        );
+        Query query = new Query(new Criteria().andOperator(
+                Criteria.where("role").ne("admin"),
+                activeStatus
+        ));
+        query.fields()
+                .include("_id")
+                .include("partnerId")
+                .include("subscription")
+                .include("role")
+                .include("accountStatus");
+        return mongoTemplate.find(query, User.class);
+    }
+
+    private Map<String, Object> buildSubscriptionStats(List<User> users) {
+        long hiPro = 0;
+        long hiMax = 0;
+        for (User user : users) {
+            SubscriptionAccessService.SubscriptionAccess access = subscriptionAccessService.getDirectAccess(user);
+            if (!access.premium()) continue;
+            if ("PREMIUM_YEARLY".equals(access.plan())) hiMax++;
+            else if ("PREMIUM_MONTHLY".equals(access.plan())) hiPro++;
+        }
+        long activePaidTotal = hiPro + hiMax;
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("free", Math.max(users.size() - activePaidTotal, 0));
+        stats.put("hiPro", hiPro);
+        stats.put("hiMax", hiMax);
+        stats.put("activePaidTotal", activePaidTotal);
+        return stats;
+    }
+
+    private Map<String, Object> buildCoupleStats(List<User> users) {
+        Map<String, User> usersById = users.stream()
+                .filter(user -> user.getId() != null)
+                .collect(java.util.stream.Collectors.toMap(User::getId, user -> user));
+        Set<String> pairKeys = new HashSet<>();
+        for (User user : users) {
+            String partnerId = user.getPartnerId();
+            if (partnerId == null || partnerId.isBlank()) continue;
+            User partner = usersById.get(partnerId);
+            if (partner == null || !user.getId().equals(partner.getPartnerId())) continue;
+            String first = user.getId().compareTo(partnerId) <= 0 ? user.getId() : partnerId;
+            String second = user.getId().compareTo(partnerId) <= 0 ? partnerId : user.getId();
+            pairKeys.add(first + ":" + second);
+        }
+        long pairedCouples = pairKeys.size();
+        long pairedUsers = pairedCouples * 2;
+        long eligibleUsers = users.size();
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("eligibleUsers", eligibleUsers);
+        stats.put("pairedUsers", pairedUsers);
+        stats.put("pairedCouples", pairedCouples);
+        stats.put("unpairedUsers", Math.max(eligibleUsers - pairedUsers, 0));
+        stats.put("pairingRatePct", eligibleUsers == 0 ? 0D : round2(pairedUsers * 100D / eligibleUsers));
+        return stats;
     }
 
     private Map<String, Long> aggregateByMonth(String collection, Instant since) {
