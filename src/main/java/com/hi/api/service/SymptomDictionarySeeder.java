@@ -2,6 +2,9 @@ package com.hi.api.service;
 
 import com.hi.api.model.SymptomCategory;
 import com.hi.api.model.SymptomDictionary;
+import com.hi.api.model.DailyLogSymptom;
+import com.hi.api.model.SymptomSeverity;
+import com.hi.api.repository.DailyLogSymptomRepository;
 import com.hi.api.repository.SymptomDictionaryRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.ApplicationArguments;
@@ -18,6 +21,7 @@ import java.util.Map;
 public class SymptomDictionarySeeder implements ApplicationRunner {
 
     private final SymptomDictionaryRepository repository;
+    private final DailyLogSymptomRepository dailyLogSymptomRepository;
     private final SequenceService sequenceService;
 
     @Value("${app.symptom-dictionary.seed-enabled:true}")
@@ -29,8 +33,11 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
     @Value("${app.migration.health-data.dry-run:true}")
     private boolean migrationDryRun;
 
-    public SymptomDictionarySeeder(SymptomDictionaryRepository repository, SequenceService sequenceService) {
+    public SymptomDictionarySeeder(SymptomDictionaryRepository repository,
+                                   DailyLogSymptomRepository dailyLogSymptomRepository,
+                                   SequenceService sequenceService) {
         this.repository = repository;
+        this.dailyLogSymptomRepository = dailyLogSymptomRepository;
         this.sequenceService = sequenceService;
     }
 
@@ -65,6 +72,7 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
                 repository.findByNameIgnoreCase(legacyName).ifPresent(legacy ->
                         repository.findByNameIgnoreCase(canonicalName).ifPresentOrElse(canonical -> {
                             if (!canonical.getId().equals(legacy.getId()) && Boolean.TRUE.equals(legacy.getActive())) {
+                                mergeLegacyReferences(legacy.getId(), canonical.getId());
                                 legacy.setActive(false);
                                 repository.save(legacy);
                             }
@@ -73,6 +81,35 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
                             legacy.setActive(true);
                             repository.save(legacy);
                         })));
+    }
+
+    private void mergeLegacyReferences(Long legacyId, Long canonicalId) {
+        if (legacyId == null || canonicalId == null || legacyId.equals(canonicalId)) {
+            return;
+        }
+        for (DailyLogSymptom legacyRelation : dailyLogSymptomRepository.findBySymptomId(legacyId)) {
+            dailyLogSymptomRepository
+                    .findByDailyLogIdAndSymptomId(legacyRelation.getDailyLogId(), canonicalId)
+                    .ifPresentOrElse(canonicalRelation -> {
+                        if (severityRank(legacyRelation.getSeverity()) > severityRank(canonicalRelation.getSeverity())) {
+                            canonicalRelation.setSeverity(legacyRelation.getSeverity());
+                            dailyLogSymptomRepository.save(canonicalRelation);
+                        }
+                        dailyLogSymptomRepository.delete(legacyRelation);
+                    }, () -> {
+                        legacyRelation.setSymptomId(canonicalId);
+                        dailyLogSymptomRepository.save(legacyRelation);
+                    });
+        }
+    }
+
+    private static int severityRank(SymptomSeverity severity) {
+        if (severity == null) return 0;
+        return switch (severity) {
+            case MILD -> 1;
+            case MODERATE -> 2;
+            case SEVERE -> 3;
+        };
     }
 
     private void deactivateDeprecatedMood() {
@@ -100,6 +137,9 @@ public class SymptomDictionarySeeder implements ApplicationRunner {
         corrections.put("Ngá»©a Ã¢m Ä‘áº¡o", "Ngứa âm đạo");
         corrections.put("KhÃ´ Ã¢m Ä‘áº¡o", "Khô âm đạo");
         corrections.put("BÃ¬nh tÄ©nh", "Bình tĩnh");
+        corrections.put("Bệnh tĩnh", "Bình tĩnh");
+        corrections.put("B�nh tĩnh", "Bình tĩnh");
+        corrections.put("B?nh tĩnh", "Bình tĩnh");
         corrections.put("Vui váº»", "Vui vẻ");
         corrections.put("Máº¡nh máº½", "Mạnh mẽ");
         corrections.put("Pháº¥n cháº¥n", "Phấn chấn");

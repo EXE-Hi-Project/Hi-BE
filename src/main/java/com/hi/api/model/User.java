@@ -100,6 +100,7 @@ public class User {
         private Boolean periodUpcomingEnabled = true;
         private Boolean fertilityWindowEnabled = false;
         private Boolean dailyHealthTipsEnabled = true;
+        private Boolean dailyHealthTipsEmailEnabled = false;
         private Boolean partnerPeriodAlertEnabled = true;
         private Boolean partnerMoodUpdatesEnabled = true;
         private Boolean partnerCareTipsEnabled = false;
