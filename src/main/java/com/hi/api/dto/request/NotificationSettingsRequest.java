@@ -9,6 +9,7 @@ public class NotificationSettingsRequest {
     private Boolean periodUpcomingEnabled;
     private Boolean fertilityWindowEnabled;
     private Boolean dailyHealthTipsEnabled;
+    private Boolean dailyHealthTipsEmailEnabled;
     private Boolean partnerPeriodAlertEnabled;
     private Boolean partnerMoodUpdatesEnabled;
     private Boolean partnerCareTipsEnabled;

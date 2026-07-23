@@ -149,6 +149,7 @@ public class UserService {
         if (req.getPeriodUpcomingEnabled() != null) prefs.setPeriodUpcomingEnabled(req.getPeriodUpcomingEnabled());
         if (req.getFertilityWindowEnabled() != null) prefs.setFertilityWindowEnabled(req.getFertilityWindowEnabled());
         if (req.getDailyHealthTipsEnabled() != null) prefs.setDailyHealthTipsEnabled(req.getDailyHealthTipsEnabled());
+        if (req.getDailyHealthTipsEmailEnabled() != null) prefs.setDailyHealthTipsEmailEnabled(req.getDailyHealthTipsEmailEnabled());
         if (req.getPartnerPeriodAlertEnabled() != null) prefs.setPartnerPeriodAlertEnabled(req.getPartnerPeriodAlertEnabled());
         if (req.getPartnerMoodUpdatesEnabled() != null) prefs.setPartnerMoodUpdatesEnabled(req.getPartnerMoodUpdatesEnabled());
         if (req.getPartnerCareTipsEnabled() != null) prefs.setPartnerCareTipsEnabled(req.getPartnerCareTipsEnabled());
@@ -189,6 +190,7 @@ public class UserService {
         if (user.getPartnerNotifications() != null) prefs.setPartnerPeriodAlertEnabled(user.getPartnerNotifications());
         if (user.getReminderDaysBefore() != null) prefs.setReminderDaysBefore(user.getReminderDaysBefore());
         prefs.setSmsEnabled(false);
+        if (prefs.getDailyHealthTipsEmailEnabled() == null) prefs.setDailyHealthTipsEmailEnabled(false);
         if (prefs.getSymptomDailyReminderEnabled() == null) prefs.setSymptomDailyReminderEnabled(true);
         prefs.setSymptomReminderTime(validTime(prefs.getSymptomReminderTime(), "20:00"));
         if (prefs.getPartnerEndOfDayNudgeEnabled() == null) prefs.setPartnerEndOfDayNudgeEnabled(true);

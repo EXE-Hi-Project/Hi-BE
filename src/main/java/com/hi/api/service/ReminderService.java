@@ -130,7 +130,8 @@ public class ReminderService {
                     Map.of("date", today.toString())
             );
 
-            if (Boolean.TRUE.equals(prefs.getEmailEnabled())) {
+            if (Boolean.TRUE.equals(prefs.getEmailEnabled())
+                    && Boolean.TRUE.equals(prefs.getDailyHealthTipsEmailEnabled())) {
                 emailService.sendDailyCheckInEmail(
                         user.getEmail(),
                         displayName(user, "bạn"),

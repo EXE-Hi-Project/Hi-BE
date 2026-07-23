@@ -1,11 +1,16 @@
 package com.hi.api.service;
 
 import com.hi.api.model.SymptomDictionary;
+import com.hi.api.model.DailyLogSymptom;
+import com.hi.api.model.SymptomCategory;
+import com.hi.api.model.SymptomSeverity;
 import com.hi.api.repository.SymptomDictionaryRepository;
+import com.hi.api.repository.DailyLogSymptomRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
+import java.util.List;
 
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -32,7 +37,7 @@ class SymptomDictionarySeederTest {
     void runningSeederAgainDoesNotCreateDuplicateItems() {
         SymptomDictionaryRepository repository = mock(SymptomDictionaryRepository.class);
         SequenceService sequenceService = mock(SequenceService.class);
-        SymptomDictionarySeeder seeder = new SymptomDictionarySeeder(repository, sequenceService);
+        SymptomDictionarySeeder seeder = new SymptomDictionarySeeder(repository, mock(DailyLogSymptomRepository.class), sequenceService);
         ReflectionTestUtils.setField(seeder, "enabled", true);
         ReflectionTestUtils.setField(seeder, "migrationEnabled", false);
         ReflectionTestUtils.setField(seeder, "migrationDryRun", false);
@@ -61,7 +66,7 @@ class SymptomDictionarySeederTest {
     void legacyGenericMoodIsDeactivatedWithoutDeletion() {
         SymptomDictionaryRepository repository = mock(SymptomDictionaryRepository.class);
         SequenceService sequenceService = mock(SequenceService.class);
-        SymptomDictionarySeeder seeder = new SymptomDictionarySeeder(repository, sequenceService);
+        SymptomDictionarySeeder seeder = new SymptomDictionarySeeder(repository, mock(DailyLogSymptomRepository.class), sequenceService);
         ReflectionTestUtils.setField(seeder, "enabled", true);
         ReflectionTestUtils.setField(seeder, "migrationEnabled", false);
         ReflectionTestUtils.setField(seeder, "migrationDryRun", false);
@@ -91,5 +96,64 @@ class SymptomDictionarySeederTest {
 
         verify(repository).save(legacy);
         org.junit.jupiter.api.Assertions.assertFalse(legacy.getActive());
+    }
+
+    @Test
+    void typoMoodIsMergedIntoCanonicalMoodWithoutLosingSeverity() {
+        SymptomDictionaryRepository repository = mock(SymptomDictionaryRepository.class);
+        DailyLogSymptomRepository relationRepository = mock(DailyLogSymptomRepository.class);
+        SequenceService sequenceService = mock(SequenceService.class);
+        SymptomDictionarySeeder seeder = new SymptomDictionarySeeder(repository, relationRepository, sequenceService);
+        ReflectionTestUtils.setField(seeder, "enabled", true);
+        ReflectionTestUtils.setField(seeder, "migrationEnabled", false);
+        ReflectionTestUtils.setField(seeder, "migrationDryRun", false);
+
+        SymptomDictionary legacy = new SymptomDictionary();
+        legacy.setId(90L);
+        legacy.setName("Bệnh tĩnh");
+        legacy.setCategory(SymptomCategory.EMOTIONAL);
+        legacy.setActive(true);
+        SymptomDictionary canonical = new SymptomDictionary();
+        canonical.setId(20L);
+        canonical.setName("Bình tĩnh");
+        canonical.setCategory(SymptomCategory.EMOTIONAL);
+        canonical.setActive(true);
+
+        DailyLogSymptom legacyRelation = new DailyLogSymptom();
+        legacyRelation.setId(901L);
+        legacyRelation.setDailyLogId(50L);
+        legacyRelation.setSymptomId(90L);
+        legacyRelation.setSeverity(SymptomSeverity.SEVERE);
+        DailyLogSymptom canonicalRelation = new DailyLogSymptom();
+        canonicalRelation.setId(201L);
+        canonicalRelation.setDailyLogId(50L);
+        canonicalRelation.setSymptomId(20L);
+        canonicalRelation.setSeverity(SymptomSeverity.MILD);
+
+        when(repository.findByNameIgnoreCase(anyString())).thenAnswer(invocation -> {
+            String name = invocation.getArgument(0);
+            if ("Bệnh tĩnh".equals(name)) return Optional.of(legacy);
+            if ("Bình tĩnh".equals(name)) return Optional.of(canonical);
+            SymptomDictionarySeeder.SeedItem item = SymptomDictionarySeeder.defaultItems().stream()
+                    .filter(candidate -> candidate.name().equals(name))
+                    .findFirst()
+                    .orElse(null);
+            if (item == null) return Optional.empty();
+            SymptomDictionary dictionary = new SymptomDictionary();
+            dictionary.setId(1000L + Math.abs(name.hashCode()));
+            dictionary.setName(item.name());
+            dictionary.setCategory(item.category());
+            dictionary.setActive(true);
+            return Optional.of(dictionary);
+        });
+        when(relationRepository.findBySymptomId(90L)).thenReturn(List.of(legacyRelation));
+        when(relationRepository.findByDailyLogIdAndSymptomId(50L, 20L)).thenReturn(Optional.of(canonicalRelation));
+
+        seeder.run(null);
+
+        org.junit.jupiter.api.Assertions.assertFalse(legacy.getActive());
+        org.junit.jupiter.api.Assertions.assertEquals(SymptomSeverity.SEVERE, canonicalRelation.getSeverity());
+        verify(relationRepository).save(canonicalRelation);
+        verify(relationRepository).delete(legacyRelation);
     }
 }
