@@ -55,6 +55,11 @@ public class User {
     private String lastPeriodDate;
     private String lastPeriodEndDate;
     private Boolean irregularCycle = false;
+    private Boolean pregnant = false;
+    private Boolean postpartum = false;
+    private Boolean breastfeeding = false;
+    private Boolean hormonalContraception = false;
+    private Boolean perimenopause = false;
 
     // Partner
     private String partnerId;

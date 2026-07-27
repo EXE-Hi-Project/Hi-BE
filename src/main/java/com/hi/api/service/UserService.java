@@ -118,6 +118,11 @@ public class UserService {
         if (req.getLastPeriodDate() != null) user.setLastPeriodDate(req.getLastPeriodDate());
         if (req.getLastPeriodEndDate() != null) user.setLastPeriodEndDate(req.getLastPeriodEndDate());
         if (req.getIrregularCycle() != null) user.setIrregularCycle(req.getIrregularCycle());
+        if (req.getPregnant() != null) user.setPregnant(req.getPregnant());
+        if (req.getPostpartum() != null) user.setPostpartum(req.getPostpartum());
+        if (req.getBreastfeeding() != null) user.setBreastfeeding(req.getBreastfeeding());
+        if (req.getHormonalContraception() != null) user.setHormonalContraception(req.getHormonalContraception());
+        if (req.getPerimenopause() != null) user.setPerimenopause(req.getPerimenopause());
         if (req.getAiPersonality() != null) user.setAiPersonality(req.getAiPersonality());
         if (req.getAiTone() != null) user.setAiTone(req.getAiTone());
         if (req.getPeriodReminder() != null) user.setPeriodReminder(req.getPeriodReminder());
@@ -273,6 +278,9 @@ public class UserService {
     }
 
     private void validateOnboardingPayload(UpdateProfileRequest req, String effectiveGender) {
+        if (Boolean.TRUE.equals(req.getPregnant()) && Boolean.TRUE.equals(req.getPostpartum())) {
+            throw new IllegalArgumentException("Không thể đồng thời chọn đang mang thai và đang trong giai đoạn sau sinh");
+        }
         if (req.getLastPeriodDate() != null && req.getLastPeriodEndDate() != null) {
             try {
                 LocalDate start = LocalDate.parse(req.getLastPeriodDate());
@@ -321,7 +329,12 @@ public class UserService {
                     || req.getDefaultPeriodLength() != null
                     || req.getLastPeriodDate() != null
                     || req.getLastPeriodEndDate() != null
-                    || req.getIrregularCycle() != null) {
+                    || req.getIrregularCycle() != null
+                    || req.getPregnant() != null
+                    || req.getPostpartum() != null
+                    || req.getBreastfeeding() != null
+                    || req.getHormonalContraception() != null
+                    || req.getPerimenopause() != null) {
                 throw new IllegalArgumentException("Onboarding nam không nhận dữ liệu chu kỳ cá nhân");
             }
             return;

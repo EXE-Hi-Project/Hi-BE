@@ -182,12 +182,19 @@ public class ReminderService {
         if (nextPeriodDate == null) return 0;
 
         int daysBefore = prefs.getReminderDaysBefore() != null ? prefs.getReminderDaysBefore() : 3;
-        LocalDate reminderDate = nextPeriodDate.minusDays(daysBefore);
+        LocalDate earliest = insights.getPredictedStartEarliest() != null
+                ? insights.getPredictedStartEarliest()
+                : nextPeriodDate;
+        LocalDate latest = insights.getPredictedStartLatest() != null
+                ? insights.getPredictedStartLatest()
+                : nextPeriodDate;
+        LocalDate reminderDate = earliest.minusDays(daysBefore);
         if (!today.equals(reminderDate)) return 0;
 
         String dedupeKey = "PERIOD_UPCOMING:" + user.getId() + ":" + today;
         boolean alreadySent = notificationService.existsByDedupeKey(user.getId(), "PERIOD_UPCOMING", dedupeKey);
-        String message = "Kỳ kinh dự kiến sẽ bắt đầu trong " + daysBefore + " ngày nữa. Đây chỉ là dự đoán tham khảo, hãy chuẩn bị nhẹ nhàng nhé.";
+        String message = "Kỳ kinh có thể bắt đầu trong khoảng " + earliest + " đến " + latest
+                + ". Đây là khoảng ước tính tham khảo, không phải một ngày chắc chắn.";
 
         if (!alreadySent) {
             notificationService.createIdempotentNotification(
@@ -197,7 +204,11 @@ public class ReminderService {
                     message,
                     "/cycles",
                     dedupeKey,
-                    Map.of("estimatedPeriodStartDate", nextPeriodDate.toString(), "daysBefore", daysBefore)
+                            Map.of(
+                                    "estimatedPeriodStartDate", nextPeriodDate.toString(),
+                                    "predictedStartEarliest", earliest.toString(),
+                                    "predictedStartLatest", latest.toString(),
+                                    "daysBefore", daysBefore)
             );
 
             if (Boolean.TRUE.equals(prefs.getEmailEnabled())) {
@@ -215,7 +226,9 @@ public class ReminderService {
                 User.NotificationPreferences partnerPrefs = prefs(partner);
                 String partnerDedupeKey = "PARTNER_PERIOD_UPCOMING:" + partner.getId() + ":" + today;
                 boolean partnerAlreadySent = notificationService.existsByDedupeKey(partner.getId(), "PARTNER_PERIOD_UPCOMING", partnerDedupeKey);
-                String partnerMessage = "Kỳ kinh của " + displayName(user, "Người ấy") + " dự kiến sẽ bắt đầu trong " + daysBefore + " ngày nữa. Hãy dành thêm sự quan tâm nhé.";
+                String partnerMessage = "Kỳ kinh của " + displayName(user, "Người ấy")
+                        + " có thể bắt đầu trong khoảng " + earliest + " đến " + latest
+                        + ". Đây là dự đoán tham khảo.";
                 
                 if (!partnerAlreadySent) {
                     notificationService.createIdempotentNotification(
@@ -225,7 +238,12 @@ public class ReminderService {
                             partnerMessage,
                             "/male-dashboard",
                             partnerDedupeKey,
-                            Map.of("estimatedPeriodStartDate", nextPeriodDate.toString(), "partnerUserId", user.getId(), "daysBefore", daysBefore)
+                            Map.of(
+                                    "estimatedPeriodStartDate", nextPeriodDate.toString(),
+                                    "predictedStartEarliest", earliest.toString(),
+                                    "predictedStartLatest", latest.toString(),
+                                    "partnerUserId", user.getId(),
+                                    "daysBefore", daysBefore)
                     );
 
                     if (Boolean.TRUE.equals(partnerPrefs.getEmailEnabled())) {
@@ -270,7 +288,12 @@ public class ReminderService {
     private boolean shouldAskForSymptomLog(CycleRecordInsightResponse insights, LocalDate today) {
         if (insights == null) return false;
         String status = insights.getPeriodStatus();
-        if ("CONFIRMED".equalsIgnoreCase(status) || "PREDICTED".equalsIgnoreCase(status) || "DELAYED".equalsIgnoreCase(status)) {
+        if ("CONFIRMED".equalsIgnoreCase(status)
+                || "NEEDS_CONFIRMATION".equalsIgnoreCase(status)
+                || "PREDICTED".equalsIgnoreCase(status)
+                || ("DELAYED".equalsIgnoreCase(status)
+                    && insights.getPeriodDelayDays() != null
+                    && insights.getPeriodDelayDays() <= 14)) {
             return true;
         }
         LocalDate start = insights.getEstimatedPeriodStartDate();

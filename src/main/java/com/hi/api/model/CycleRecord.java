@@ -49,6 +49,8 @@ public class CycleRecord {
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate lastBleedingDate;
 
+    private Boolean endDateEstimated = false;
+
     @Indexed
     private Boolean isIgnored = false;
 

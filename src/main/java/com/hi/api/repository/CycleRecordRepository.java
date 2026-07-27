@@ -1,6 +1,7 @@
 package com.hi.api.repository;
 
 import com.hi.api.model.CycleRecord;
+import com.hi.api.model.CycleRecordStatus;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -18,4 +19,5 @@ public interface CycleRecordRepository extends MongoRepository<CycleRecord, Long
     List<CycleRecord> findByUserIdAndStartDateLessThanEqualOrderByStartDateDesc(String userId, LocalDate to);
     Optional<CycleRecord> findByIdAndUserId(Long id, String userId);
     Optional<CycleRecord> findByUserIdAndStartDate(String userId, LocalDate startDate);
+    List<CycleRecord> findByStatus(CycleRecordStatus status);
 }

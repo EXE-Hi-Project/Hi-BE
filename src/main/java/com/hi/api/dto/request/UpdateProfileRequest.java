@@ -49,6 +49,11 @@ public class UpdateProfileRequest {
     @Pattern(regexp = "^\\d{4}-\\d{2}-\\d{2}$", message = "Ngày kết thúc kỳ kinh phải có định dạng yyyy-MM-dd")
     private String lastPeriodEndDate;
     private Boolean irregularCycle;
+    private Boolean pregnant;
+    private Boolean postpartum;
+    private Boolean breastfeeding;
+    private Boolean hormonalContraception;
+    private Boolean perimenopause;
 
     @Pattern(regexp = "^(friendly|professional|caring|playful)$", message = "Tính cách AI không hợp lệ")
     private String aiPersonality;

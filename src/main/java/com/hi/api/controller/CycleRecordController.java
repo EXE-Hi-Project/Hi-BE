@@ -81,7 +81,9 @@ public class CycleRecordController {
         LocalDate startDate = record.getStartDate();
         LocalDate endDate = record.getEndDate() != null
                 ? record.getEndDate()
-                : startDate.plusDays(Math.max(record.getPeriodLength() != null ? record.getPeriodLength() : 5, 1) - 1L);
+                : record.getLastBleedingDate() != null
+                    ? record.getLastBleedingDate()
+                    : startDate;
         return ResponseEntity.ok(Map.of(
                 "success", true,
                 "cycleRecord", record,

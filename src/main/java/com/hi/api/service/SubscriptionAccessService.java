@@ -85,7 +85,6 @@ public class SubscriptionAccessService {
             return insights.toBuilder().advancedAnalyticsAvailable(true).build();
         }
         return insights.toBuilder()
-                .predictionConfidence(null)
                 .regularityStatus(null)
                 .regularityScore(null)
                 .regularityLabel(null)
