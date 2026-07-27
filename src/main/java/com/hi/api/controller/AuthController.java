@@ -92,7 +92,7 @@ public class AuthController {
         response.put("success", true);
         response.put("message", "Đăng nhập thành công");
         response.put("data", payload);
-        return withAuthCookie(response, payload);
+        return withAuthSession(response, payload, request);
     }
 
     @GetMapping("/csrf")
@@ -119,24 +119,28 @@ public class AuthController {
 
     @PostMapping("/refresh")
     @SecurityRequirement(name = "Bearer Authentication")
-    public ResponseEntity<Map<String, Object>> refresh(@AuthenticationPrincipal User user) {
+    public ResponseEntity<Map<String, Object>> refresh(
+            @AuthenticationPrincipal User user,
+            HttpServletRequest request) {
         Map<String, Object> payload = authService.buildAuthPayload(user);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("success", true);
         response.put("message", "Làm mới phiên đăng nhập thành công");
         response.put("data", payload);
-        return withAuthCookie(response, payload);
+        return withAuthSession(response, payload, request);
     }
 
     @PostMapping("/google")
-    public ResponseEntity<Map<String, Object>> googleAuth(@RequestBody GoogleAuthRequest req) {
+    public ResponseEntity<Map<String, Object>> googleAuth(
+            @RequestBody GoogleAuthRequest req,
+            HttpServletRequest request) {
         try {
             Map<String, Object> payload = authService.googleAuth(req);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
             response.put("message", "Đăng nhập Google thành công");
             response.put("data", payload);
-            return withAuthCookie(response, payload);
+            return withAuthSession(response, payload, request);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
@@ -144,15 +148,21 @@ public class AuthController {
         }
     }
 
+    ResponseEntity<Map<String, Object>> googleAuth(GoogleAuthRequest req) {
+        return googleAuth(req, null);
+    }
+
     @PostMapping("/facebook")
-    public ResponseEntity<Map<String, Object>> facebookAuth(@RequestBody GoogleAuthRequest req) {
+    public ResponseEntity<Map<String, Object>> facebookAuth(
+            @RequestBody GoogleAuthRequest req,
+            HttpServletRequest request) {
         try {
             Map<String, Object> payload = authService.facebookAuth(req);
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
             response.put("message", "Đăng nhập Facebook thành công");
             response.put("data", payload);
-            return withAuthCookie(response, payload);
+            return withAuthSession(response, payload, request);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         } catch (Exception e) {
@@ -221,7 +231,7 @@ public class AuthController {
             response.put("success", true);
             response.put("message", "Kích hoạt tài khoản thành công");
             response.put("data", payload);
-            return withAuthCookie(response, payload);
+            return withAuthSession(response, payload, request);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
@@ -253,24 +263,47 @@ public class AuthController {
                 .body(Map.of("success", true, "message", "Đã đăng xuất"));
     }
 
-    private ResponseEntity<Map<String, Object>> withAuthCookie(Map<String, Object> body, Map<String, Object> payload) {
+    private ResponseEntity<Map<String, Object>> withAuthSession(
+            Map<String, Object> body,
+            Map<String, Object> payload,
+            HttpServletRequest request) {
         Object user = payload.get("user");
+        String tokenValue;
         if (user instanceof User authUser && authUser.getId() != null && !authUser.getId().isBlank()) {
-            return ResponseEntity.ok()
-                    .header(HttpHeaders.SET_COOKIE, authCookie(authService.issueToken(authUser.getId())).toString())
-                    .body(body);
-        }
-        if (!(user instanceof Map<?, ?> userMap)) {
+            tokenValue = authService.issueToken(authUser.getId());
+        } else if (user instanceof Map<?, ?> userMap
+                && userMap.get("_id") instanceof String userIdValue
+                && !userIdValue.isBlank()) {
+            tokenValue = authService.issueToken(userIdValue);
+        } else {
             return ResponseEntity.ok(body);
         }
-        Object userId = userMap.get("_id");
-        if (!(userId instanceof String userIdValue) || userIdValue.isBlank()) {
-            return ResponseEntity.ok(body);
+
+        if (isNativeMobileRequest(request)) {
+            Object data = body.get("data");
+            if (data instanceof Map<?, ?> dataMap) {
+                Map<String, Object> mobileData = new LinkedHashMap<>();
+                dataMap.forEach((key, value) -> {
+                    if (key instanceof String stringKey) {
+                        mobileData.put(stringKey, value);
+                    }
+                });
+                mobileData.put("token", tokenValue);
+                body.put("data", mobileData);
+            }
         }
-        String tokenValue = authService.issueToken(userIdValue);
+
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, authCookie(tokenValue).toString())
                 .body(body);
+    }
+
+    private boolean isNativeMobileRequest(HttpServletRequest request) {
+        if (request == null) {
+            return false;
+        }
+        String platform = request.getHeader("X-Client-Platform");
+        return "ios".equalsIgnoreCase(platform) || "android".equalsIgnoreCase(platform);
     }
 
     private ResponseEntity<Map<String, Object>> otpDeliveryFailure(OtpDeliveryException exception, String email) {

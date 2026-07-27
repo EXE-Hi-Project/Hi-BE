@@ -133,9 +133,13 @@ public class DailyLogService {
         if (req.getSymptoms() != null) {
             syncSymptoms(saved, req.getSymptoms());
         }
-        if (Boolean.TRUE.equals(req.getConfirmPeriodStart())) {
-            cycleRecordService.confirmPeriodStart(userId, logDate);
-        }
+        cycleRecordService.syncPeriodFromDailyLog(
+                userId,
+                logDate,
+                flowIntensity,
+                Boolean.TRUE.equals(req.getConfirmPeriodStart()),
+                Boolean.TRUE.equals(req.getConfirmPeriodEnd())
+        );
         attachSymptoms(List.of(saved));
         return saved;
     }
@@ -223,6 +227,7 @@ public class DailyLogService {
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy nhật ký ngày này"));
         dailyLogSymptomRepository.deleteByDailyLogId(log.getId());
         dailyLogRepository.delete(log);
+        cycleRecordService.reconcilePeriodAfterLogDeletion(userId, logDate);
     }
 
     @CacheEvict(value = "ai_context", key = "#userId")

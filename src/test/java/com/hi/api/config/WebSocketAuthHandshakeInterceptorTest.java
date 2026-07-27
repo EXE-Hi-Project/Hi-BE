@@ -59,7 +59,41 @@ class WebSocketAuthHandshakeInterceptorTest {
     }
 
     @Test
-    void missingAccessCookieRejectsHandshake() {
+    void validBearerHeaderCreatesUserPrincipal() {
+        JwtUtil jwtUtil = mock(JwtUtil.class);
+        UserRepository userRepository = mock(UserRepository.class);
+        WebSocketAuthHandshakeInterceptor interceptor =
+                new WebSocketAuthHandshakeInterceptor(jwtUtil, userRepository);
+        User user = new User();
+        user.setId("native-user");
+        user.setRole("user");
+        user.setAccountStatus("ACTIVE");
+
+        when(jwtUtil.validateToken("native-token")).thenReturn(true);
+        when(jwtUtil.getUserIdFromToken("native-token")).thenReturn("native-user");
+        when(userRepository.findById("native-user")).thenReturn(Optional.of(user));
+
+        MockHttpServletRequest servletRequest = new MockHttpServletRequest();
+        servletRequest.addHeader("Authorization", "Bearer native-token");
+        Map<String, Object> attributes = new HashMap<>();
+
+        boolean accepted = interceptor.beforeHandshake(
+                new ServletServerHttpRequest(servletRequest),
+                mock(org.springframework.http.server.ServerHttpResponse.class),
+                mock(WebSocketHandler.class),
+                attributes
+        );
+
+        assertTrue(accepted);
+        Principal principal = assertInstanceOf(
+                Principal.class,
+                attributes.get(WebSocketAuthHandshakeInterceptor.PRINCIPAL_ATTRIBUTE)
+        );
+        assertEquals("native-user", principal.getName());
+    }
+
+    @Test
+    void missingAccessTokenRejectsHandshake() {
         WebSocketAuthHandshakeInterceptor interceptor = new WebSocketAuthHandshakeInterceptor(
                 mock(JwtUtil.class),
                 mock(UserRepository.class)

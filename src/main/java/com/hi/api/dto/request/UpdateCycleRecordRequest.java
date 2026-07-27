@@ -1,9 +1,11 @@
 package com.hi.api.dto.request;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.hi.api.model.CycleRecordStatus;
 import lombok.Data;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
 
@@ -23,6 +25,11 @@ public class UpdateCycleRecordRequest {
     @Min(value = 1, message = "Độ dài kỳ kinh phải từ 1 đến 30 ngày")
     @Max(value = 30, message = "Độ dài kỳ kinh phải từ 1 đến 30 ngày")
     private Integer periodLength;
+
+    @Size(max = 1000, message = "Ghi chú không được vượt quá 1000 ký tự")
+    private String notes;
+
+    private CycleRecordStatus status;
 
     private Boolean isIgnored;
 }

@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -61,7 +62,7 @@ class DailyLogServiceTest {
 
         service.upsertLog("female-1", today, request);
 
-        verify(cycleRecordService, never()).confirmPeriodStart(any(), any());
+        verify(cycleRecordService).syncPeriodFromDailyLog("female-1", today, FlowIntensity.LIGHT, false, false);
     }
 
     @Test
@@ -76,7 +77,7 @@ class DailyLogServiceTest {
 
         service.upsertLog("female-1", today, request);
 
-        verify(cycleRecordService).confirmPeriodStart("female-1", today);
+        verify(cycleRecordService).syncPeriodFromDailyLog("female-1", today, FlowIntensity.LIGHT, true, false);
     }
 
     @Test
@@ -87,7 +88,7 @@ class DailyLogServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> service.upsertLog("female-1", LocalDate.now(), request));
         verify(dailyLogRepository, never()).save(any());
-        verify(cycleRecordService, never()).confirmPeriodStart(any(), any());
+        verify(cycleRecordService, never()).syncPeriodFromDailyLog(any(), any(), any(), anyBoolean(), anyBoolean());
     }
 
     @Test

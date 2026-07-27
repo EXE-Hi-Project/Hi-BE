@@ -10,6 +10,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 
 class SecurityConfigTest {
@@ -23,7 +25,28 @@ class SecurityConfigTest {
         CorsConfiguration cors = config.corsConfigurationSource()
                 .getCorsConfiguration(new MockHttpServletRequest("GET", "/api/auth/csrf"));
 
-        assertEquals(List.of("Content-Type", "Authorization", "X-XSRF-TOKEN", "X-Requested-With"), cors.getAllowedHeaders());
+        assertEquals(List.of(
+                "Content-Type",
+                "Authorization",
+                "X-XSRF-TOKEN",
+                "X-Requested-With",
+                "X-Client-Platform",
+                "X-Idempotency-Key"
+        ), cors.getAllowedHeaders());
         assertEquals(Boolean.TRUE, cors.getAllowCredentials());
+    }
+
+    @Test
+    void nativeMobileApiRequestsBypassCookieCsrfBoundary() {
+        MockHttpServletRequest android = new MockHttpServletRequest("POST", "/api/auth/login");
+        android.addHeader("X-Client-Platform", "android");
+        assertTrue(SecurityConfig.nativeMobileRequest().matches(android));
+
+        MockHttpServletRequest web = new MockHttpServletRequest("POST", "/api/auth/login");
+        assertFalse(SecurityConfig.nativeMobileRequest().matches(web));
+
+        MockHttpServletRequest nonApi = new MockHttpServletRequest("POST", "/admin/action");
+        nonApi.addHeader("X-Client-Platform", "android");
+        assertFalse(SecurityConfig.nativeMobileRequest().matches(nonApi));
     }
 }

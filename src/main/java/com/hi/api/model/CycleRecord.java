@@ -42,6 +42,13 @@ public class CycleRecord {
 
     private Integer periodLength;
 
+    private String notes;
+
+    private CycleRecordStatus status;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    private LocalDate lastBleedingDate;
+
     @Indexed
     private Boolean isIgnored = false;
 
