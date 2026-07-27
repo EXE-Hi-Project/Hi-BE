@@ -3,6 +3,9 @@ package com.hi.api.service;
 import com.hi.api.dto.request.CycleRecordInsightResponse;
 import com.hi.api.exception.ConflictException;
 import com.hi.api.model.CycleRecord;
+import com.hi.api.model.CycleRecordStatus;
+import com.hi.api.model.DailyLog;
+import com.hi.api.model.FlowIntensity;
 import com.hi.api.model.User;
 import com.hi.api.repository.CycleRecordRepository;
 import com.hi.api.repository.DailyLogRepository;
@@ -242,11 +245,94 @@ class CycleRecordServiceTest {
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(cycleRecordRepository.findByUserIdAndStartDate(userId, today)).thenReturn(Optional.of(existing));
+        when(cycleRecordRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         CycleRecord result = service.confirmPeriodStart(userId, today);
 
         assertEquals(existing, result);
-        verify(cycleRecordRepository, never()).save(any());
+        assertEquals(CycleRecordStatus.ONGOING, result.getStatus());
+        assertEquals(1, result.getPeriodLength());
+    }
+
+    @Test
+    void dailyFlowExtendsOngoingPeriodBeyondFiveDays() {
+        String userId = "female-day-six";
+        LocalDate startDate = LocalDate.now().minusDays(5);
+        CycleRecord active = cycleRecord(userId, startDate, 28, 5);
+        active.setStatus(CycleRecordStatus.ONGOING);
+        active.setLastBleedingDate(startDate.plusDays(4));
+
+        when(cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId)).thenReturn(List.of(active));
+        when(cycleRecordRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CycleRecord result = service.syncPeriodFromDailyLog(
+                userId,
+                LocalDate.now(),
+                FlowIntensity.LIGHT,
+                false,
+                false
+        );
+
+        assertEquals(CycleRecordStatus.ONGOING, result.getStatus());
+        assertEquals(LocalDate.now(), result.getLastBleedingDate());
+        assertEquals(6, result.getPeriodLength());
+        assertEquals(null, result.getEndDate());
+    }
+
+    @Test
+    void endingWithoutFlowUsesLastRecordedBleedingDay() {
+        String userId = "female-finish";
+        LocalDate startDate = LocalDate.now().minusDays(6);
+        LocalDate lastBleedingDate = LocalDate.now().minusDays(1);
+        CycleRecord active = cycleRecord(userId, startDate, 28, 6);
+        active.setStatus(CycleRecordStatus.ONGOING);
+        active.setLastBleedingDate(lastBleedingDate);
+        DailyLog bleedingLog = new DailyLog();
+        bleedingLog.setLogDate(lastBleedingDate);
+        bleedingLog.setFlowIntensity(FlowIntensity.LIGHT);
+
+        when(cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId)).thenReturn(List.of(active));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of(bleedingLog));
+        when(cycleRecordRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CycleRecord result = service.syncPeriodFromDailyLog(
+                userId,
+                LocalDate.now(),
+                FlowIntensity.NONE,
+                false,
+                true
+        );
+
+        assertEquals(CycleRecordStatus.COMPLETED, result.getStatus());
+        assertEquals(lastBleedingDate, result.getEndDate());
+        assertEquals(6, result.getPeriodLength());
+    }
+
+    @Test
+    void ongoingPeriodIsConfirmedButExcludedFromAveragePeriodLength() {
+        String userId = "female-ongoing";
+        LocalDate startDate = LocalDate.now().minusDays(5);
+        CycleRecord active = cycleRecord(userId, startDate, 28, 6);
+        active.setStatus(CycleRecordStatus.ONGOING);
+        active.setLastBleedingDate(LocalDate.now());
+        User user = new User();
+        user.setId(userId);
+        user.setDefaultCycleLength(28);
+        user.setDefaultPeriodLength(5);
+
+        when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
+                .thenReturn(List.of(active));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of());
+
+        CycleRecordInsightResponse insights = service.getInsights(userId);
+
+        assertEquals("CONFIRMED", insights.getPeriodStatus());
+        assertTrue(insights.isPeriodOngoing());
+        assertEquals(6, insights.getConfirmedPeriodDay());
+        assertEquals(null, insights.getAveragePeriodLength());
     }
 
     private CycleRecord cycleRecord(String userId, LocalDate startDate, int cycleLength, int periodLength) {

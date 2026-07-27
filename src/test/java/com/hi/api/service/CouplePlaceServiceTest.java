@@ -71,7 +71,9 @@ class CouplePlaceServiceTest {
                 mock(GooglePlaceCacheRepository.class),
                 sequenceService,
                 restTemplate,
-                partnerAccessService
+                partnerAccessService,
+                mock(software.amazon.awssdk.services.s3.S3Client.class),
+                mock(software.amazon.awssdk.services.s3.presigner.S3Presigner.class)
         );
         ReflectionTestUtils.setField(service, "photonUrl", "https://photon.komoot.io/api");
         ReflectionTestUtils.setField(service, "tomTomSearchApiKey", "");
@@ -345,6 +347,27 @@ class CouplePlaceServiceTest {
         );
 
         assertEquals(410, error.getStatusCode().value());
+    }
+
+    @Test
+    void photoUploadRejectsFilesLargerThanFiveMegabytesWhenEnabled() {
+        CouplePlace place = new CouplePlace();
+        place.setId(45L);
+        place.setVisibility(CouplePlaceVisibility.PUBLIC);
+        when(placeRepository.findById(45L)).thenReturn(Optional.of(place));
+        ReflectionTestUtils.setField(service, "photoUploadEnabled", true);
+        ReflectionTestUtils.setField(service, "mediaBucket", "hi-user-media");
+        PresignCouplePlacePhotoRequest request = new PresignCouplePlacePhotoRequest();
+        request.setFileName("place.jpg");
+        request.setContentType("image/jpeg");
+        request.setContentLength(5L * 1024L * 1024L + 1L);
+
+        ResponseStatusException error = assertThrows(
+                ResponseStatusException.class,
+                () -> service.presignPhoto(user("user-1", null), 45L, request)
+        );
+
+        assertEquals(400, error.getStatusCode().value());
     }
 
     @Test

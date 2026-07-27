@@ -24,6 +24,9 @@ public class CycleRecordInsightResponse {
     LocalDate lastRecordedEndDate;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate lastBleedingDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
     LocalDate estimatedCurrentCycleStartDate;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
@@ -50,6 +53,7 @@ public class CycleRecordInsightResponse {
     Integer currentCycleDay;
     String currentPhase;
     String periodStatus;
+    boolean periodOngoing;
     Integer confirmedPeriodDay;
     Integer estimatedCycleDay;
     String estimatedPhase;

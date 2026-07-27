@@ -7,6 +7,11 @@ import lombok.Data;
 
 @Data
 public class CreateVoucherCheckoutRequest {
+    public enum Client {
+        WEB,
+        MOBILE
+    }
+
     @NotNull
     private Long productId;
 
@@ -15,4 +20,7 @@ public class CreateVoucherCheckoutRequest {
     private Integer quantity = 1;
 
     private String deliveryEmail;
+
+    @NotNull
+    private Client client = Client.WEB;
 }

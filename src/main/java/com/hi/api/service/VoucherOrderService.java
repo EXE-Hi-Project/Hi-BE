@@ -36,6 +36,9 @@ public class VoucherOrderService {
     @Value("${app.client-url}")
     private String clientUrl;
 
+    @Value("${app.mobile-return-url:https://hilover.space}")
+    private String mobileReturnUrl;
+
     public VoucherOrderService(VoucherOrderRepository voucherOrderRepository,
                                TransactionRepository transactionRepository,
                                AffiliateProductService affiliateProductService,
@@ -71,7 +74,7 @@ public class VoucherOrderService {
         long orderId = sequenceService.next("voucher_orders");
         long orderCode = nextOrderCode();
         String transactionRefId = "HI-GOTIT-" + orderId + "-" + orderCode;
-        String baseUrl = resolveReturnBaseUrl(originUrl);
+        String baseUrl = resolveReturnBaseUrl(originUrl, req.getClient());
 
         VoucherOrder order = new VoucherOrder();
         order.setId(orderId);
@@ -205,8 +208,10 @@ public class VoucherOrderService {
         return email;
     }
 
-    private String resolveReturnBaseUrl(String originUrl) {
-        String value = originUrl == null || originUrl.isBlank() ? clientUrl : originUrl;
+    String resolveReturnBaseUrl(String originUrl, CreateVoucherCheckoutRequest.Client client) {
+        String value = CreateVoucherCheckoutRequest.Client.MOBILE.equals(client)
+                ? mobileReturnUrl
+                : (originUrl == null || originUrl.isBlank() ? clientUrl : originUrl);
         while (value.endsWith("/")) {
             value = value.substring(0, value.length() - 1);
         }

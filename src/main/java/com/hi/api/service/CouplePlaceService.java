@@ -40,6 +40,13 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 import java.text.Normalizer;
 import java.time.Duration;
@@ -54,6 +61,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -67,6 +75,9 @@ public class CouplePlaceService {
     private static final int MAX_ADDRESS_SUGGESTIONS = 8;
     private static final int MAX_ADDRESS_CANDIDATES = 16;
     private static final int MAX_PHOTOS_PER_PLACE = 5;
+    private static final long MAX_PHOTO_BYTES = 5L * 1024L * 1024L;
+    private static final Duration PHOTO_PRESIGN_TTL = Duration.ofMinutes(10);
+    private static final Set<String> ALLOWED_PHOTO_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
 
     private final CouplePlaceRepository placeRepository;
     private final CouplePlaceReviewRepository reviewRepository;
@@ -77,6 +88,8 @@ public class CouplePlaceService {
     private final SequenceService sequenceService;
     private final RestTemplate restTemplate;
     private final PartnerAccessService partnerAccessService;
+    private final S3Client s3Client;
+    private final S3Presigner s3Presigner;
 
     @Value("${app.osm.overpass-url:https://overpass-api.de/api/interpreter}")
     private String overpassUrl;
@@ -105,6 +118,18 @@ public class CouplePlaceService {
     @Value("${app.couple-places.report-hide-threshold:3}")
     private int reportHideThreshold;
 
+    @Value("${app.couple-places.photo-upload-enabled:false}")
+    private boolean photoUploadEnabled;
+
+    @Value("${app.s3.user-media-bucket:}")
+    private String mediaBucket;
+
+    @Value("${app.s3.public-base-url:}")
+    private String mediaPublicBaseUrl;
+
+    @Value("${app.s3.region:${aws.region:us-east-1}}")
+    private String mediaRegion;
+
     public CouplePlaceService(CouplePlaceRepository placeRepository,
                               CouplePlaceReviewRepository reviewRepository,
                               CouplePlaceReactionRepository reactionRepository,
@@ -113,7 +138,9 @@ public class CouplePlaceService {
                               GooglePlaceCacheRepository googleCacheRepository,
                               SequenceService sequenceService,
                               RestTemplate restTemplate,
-                              PartnerAccessService partnerAccessService) {
+                              PartnerAccessService partnerAccessService,
+                              S3Client s3Client,
+                              S3Presigner s3Presigner) {
         this.placeRepository = placeRepository;
         this.reviewRepository = reviewRepository;
         this.reactionRepository = reactionRepository;
@@ -123,6 +150,8 @@ public class CouplePlaceService {
         this.sequenceService = sequenceService;
         this.restTemplate = restTemplate;
         this.partnerAccessService = partnerAccessService;
+        this.s3Client = s3Client;
+        this.s3Presigner = s3Presigner;
     }
 
     public List<CouplePlace> nearby(User user, Double lat, Double lng, Integer radius, CouplePlaceCategory category, String sort) {
@@ -845,12 +874,123 @@ public class CouplePlaceService {
 
     public Map<String, Object> presignPhoto(User user, Long placeId, PresignCouplePlacePhotoRequest request) {
         getAccessiblePlace(user, placeId);
-        throw new ResponseStatusException(HttpStatus.GONE, "Tính năng tải ảnh đang tạm tắt");
+        ensurePhotoUploadEnabled();
+        if (photoRepository.countByPlaceIdAndStatus(placeId, CouplePlaceStatus.PUBLISHED) >= MAX_PHOTOS_PER_PLACE) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Địa điểm đã có tối đa 5 ảnh");
+        }
+        String contentType = normalizePhotoContentType(request.getContentType());
+        validatePhotoLength(request.getContentLength());
+        String objectKey = "couple-places/%s/%s/%s%s".formatted(
+                placeId,
+                user.getId(),
+                UUID.randomUUID(),
+                photoExtension(contentType, request.getFileName())
+        );
+        PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+                .bucket(mediaBucket)
+                .key(objectKey)
+                .contentType(contentType)
+                .build();
+        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
+                .signatureDuration(PHOTO_PRESIGN_TTL)
+                .putObjectRequest(putObjectRequest)
+                .build();
+        return Map.of(
+                "uploadUrl", s3Presigner.presignPutObject(presignRequest).url().toString(),
+                "objectKey", objectKey,
+                "publicUrl", photoPublicUrl(objectKey),
+                "contentType", contentType,
+                "expiresInSeconds", PHOTO_PRESIGN_TTL.toSeconds()
+        );
     }
 
     public CouplePlacePhoto confirmPhoto(User user, Long placeId, ConfirmCouplePlacePhotoRequest request) {
         getAccessiblePlace(user, placeId);
-        throw new ResponseStatusException(HttpStatus.GONE, "Tính năng tải ảnh đang tạm tắt");
+        ensurePhotoUploadEnabled();
+        String objectKey = request.getObjectKey() == null ? "" : request.getObjectKey().trim();
+        String expectedPrefix = "couple-places/%s/%s/".formatted(placeId, user.getId());
+        if (!objectKey.startsWith(expectedPrefix)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Ảnh không thuộc người dùng hoặc địa điểm này");
+        }
+        if (photoRepository.countByPlaceIdAndStatus(placeId, CouplePlaceStatus.PUBLISHED) >= MAX_PHOTOS_PER_PLACE) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Địa điểm đã có tối đa 5 ảnh");
+        }
+        String contentType = verifyPhotoObject(objectKey);
+        CouplePlacePhoto photo = new CouplePlacePhoto();
+        photo.setId(sequenceService.next("couple_place_photos"));
+        photo.setPlaceId(placeId);
+        photo.setUserId(user.getId());
+        photo.setUserName(user.getName());
+        photo.setObjectKey(objectKey);
+        photo.setUrl(photoPublicUrl(objectKey));
+        photo.setContentType(contentType);
+        photo.setStatus(CouplePlaceStatus.PUBLISHED);
+        return photoRepository.save(photo);
+    }
+
+    private void ensurePhotoUploadEnabled() {
+        if (!photoUploadEnabled) {
+            throw new ResponseStatusException(HttpStatus.GONE, "Tính năng tải ảnh đang tạm tắt");
+        }
+        if (mediaBucket == null || mediaBucket.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Chưa cấu hình kho ảnh địa điểm");
+        }
+    }
+
+    private String verifyPhotoObject(String objectKey) {
+        try {
+            var head = s3Client.headObject(HeadObjectRequest.builder()
+                    .bucket(mediaBucket)
+                    .key(objectKey)
+                    .build());
+            String contentType = normalizePhotoContentType(head.contentType());
+            validatePhotoLength(head.contentLength());
+            return contentType;
+        } catch (NoSuchKeyException ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chưa tìm thấy ảnh đã tải lên");
+        } catch (S3Exception ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Không thể xác thực ảnh đã tải lên");
+        }
+    }
+
+    private String normalizePhotoContentType(String contentType) {
+        String normalized = contentType == null ? "" : contentType.trim().toLowerCase(Locale.ROOT);
+        if (!ALLOWED_PHOTO_TYPES.contains(normalized)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chỉ hỗ trợ ảnh JPG, PNG hoặc WebP");
+        }
+        return normalized;
+    }
+
+    private void validatePhotoLength(Long contentLength) {
+        if (contentLength == null || contentLength <= 0 || contentLength > MAX_PHOTO_BYTES) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ảnh địa điểm phải nhỏ hơn 5MB");
+        }
+    }
+
+    private String photoPublicUrl(String objectKey) {
+        String base = mediaPublicBaseUrl == null ? "" : mediaPublicBaseUrl.trim();
+        if (!base.isBlank()) {
+            return base.replaceAll("/+$", "") + "/" + objectKey;
+        }
+        if (mediaBucket.contains(".")) {
+            return "https://s3.%s.amazonaws.com/%s/%s".formatted(mediaRegion, mediaBucket, objectKey);
+        }
+        if ("us-east-1".equals(mediaRegion)) {
+            return "https://%s.s3.amazonaws.com/%s".formatted(mediaBucket, objectKey);
+        }
+        return "https://%s.s3.%s.amazonaws.com/%s".formatted(mediaBucket, mediaRegion, objectKey);
+    }
+
+    private String photoExtension(String contentType, String fileName) {
+        String cleaned = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
+        if (cleaned.endsWith(".jpg") || cleaned.endsWith(".jpeg")) return ".jpg";
+        if (cleaned.endsWith(".png")) return ".png";
+        if (cleaned.endsWith(".webp")) return ".webp";
+        return switch (contentType) {
+            case "image/png" -> ".png";
+            case "image/webp" -> ".webp";
+            default -> ".jpg";
+        };
     }
 
     public List<AdminCouplePlaceResponse> adminPlaces() {

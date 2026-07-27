@@ -15,6 +15,8 @@ public class UpsertDailyLogRequest {
 
     private Boolean confirmPeriodStart = false;
 
+    private Boolean confirmPeriodEnd = false;
+
     private Boolean hasClots = false;
 
     @Min(value = 1, message = "Mood score phải từ 1 đến 5")

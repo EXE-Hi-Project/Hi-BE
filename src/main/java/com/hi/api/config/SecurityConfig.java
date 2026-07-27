@@ -21,6 +21,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -42,7 +43,7 @@ public class SecurityConfig {
             "/swagger-ui"
     };
 
-    @Value("${app.cors.allowed-origins:http://localhost:5173}")
+    @Value("${app.cors.allowed-origins:http://localhost:5173,http://localhost:8081}")
     private String allowedOriginsStr;
 
     @Value("${app.cors.allow-vercel-preview:false}")
@@ -75,6 +76,7 @@ public class SecurityConfig {
             .csrf(csrf -> csrf
                 .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
                 .ignoringRequestMatchers(
+                        nativeMobileRequest(),
                         new AntPathRequestMatcher("/api/analytics/track", "POST"),
                         new AntPathRequestMatcher("/api/payments/webhook", "POST"),
                         new AntPathRequestMatcher("/api/webhooks/resend", "POST")
@@ -140,6 +142,14 @@ public class SecurityConfig {
         return http.build();
     }
 
+    static RequestMatcher nativeMobileRequest() {
+        return request -> {
+            String platform = request.getHeader("X-Client-Platform");
+            return request.getRequestURI().startsWith("/api/")
+                    && ("android".equalsIgnoreCase(platform) || "ios".equalsIgnoreCase(platform));
+        };
+    }
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
@@ -158,7 +168,14 @@ public class SecurityConfig {
         }
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Content-Type", "Authorization", "X-XSRF-TOKEN", "X-Requested-With"));
+        config.setAllowedHeaders(List.of(
+                "Content-Type",
+                "Authorization",
+                "X-XSRF-TOKEN",
+                "X-Requested-With",
+                "X-Client-Platform",
+                "X-Idempotency-Key"
+        ));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 

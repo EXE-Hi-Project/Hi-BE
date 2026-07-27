@@ -152,6 +152,11 @@ public class ChatService {
         }
     }
 
+    public AiDailyUsageService.Usage currentUsage(String userId) {
+        SubscriptionAccessService.SubscriptionAccess access = subscriptionAccessService.getAccess(userId);
+        return aiDailyUsageService.current(userId, access.aiDailyLimit());
+    }
+
     private String recentConversationContext(String userId, LocalDate sessionDate, String currentMessageId) {
         List<ChatMessage> history = getHistory(userId, sessionDate);
         int start = Math.max(0, history.size() - 9);

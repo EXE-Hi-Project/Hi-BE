@@ -5,6 +5,7 @@ import com.hi.api.dto.request.CycleRecordInsightResponse;
 import com.hi.api.dto.request.UpdateCycleRecordRequest;
 import com.hi.api.exception.ConflictException;
 import com.hi.api.model.CycleRecord;
+import com.hi.api.model.CycleRecordStatus;
 import com.hi.api.model.DailyLog;
 import com.hi.api.model.DailyLogSymptom;
 import com.hi.api.model.FlowIntensity;
@@ -73,11 +74,12 @@ public class CycleRecordService {
         if (from != null || to != null) {
             records = records.stream()
                     .filter(record -> {
-                        LocalDate d = record.getStartDate();
-                        if (d == null) return false;
-                        boolean afterFrom = (from == null || !d.isBefore(from));
-                        boolean beforeTo = (to == null || !d.isAfter(to));
-                        return afterFrom && beforeTo;
+                        LocalDate start = record.getStartDate();
+                        if (start == null) return false;
+                        LocalDate end = recordedEndDate(record);
+                        boolean overlapsFrom = from == null || !end.isBefore(from);
+                        boolean overlapsTo = to == null || !start.isAfter(to);
+                        return overlapsFrom && overlapsTo;
                     })
                     .collect(java.util.stream.Collectors.toList());
         }
@@ -90,7 +92,16 @@ public class CycleRecordService {
         CycleRecord record = new CycleRecord();
         record.setId(sequenceService.next("cycle_records"));
         record.setUserId(userId);
-        apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(), req.getIsIgnored());
+        CycleRecordStatus requestedStatus = req.getStatus() != null
+                ? req.getStatus()
+                : req.getEndDate() == null ? CycleRecordStatus.ONGOING : CycleRecordStatus.COMPLETED;
+        apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(),
+                req.getNotes(), requestedStatus, req.getIsIgnored());
+        if (CycleRecordStatus.ONGOING.equals(record.getStatus())) {
+            findOngoingPeriod(userId, record.getStartDate()).ifPresent(existing -> {
+                throw new ConflictException("Kỳ hiện tại chưa kết thúc. Hãy kết thúc kỳ trước khi tạo kỳ mới.");
+            });
+        }
         ensureNoOverlap(userId, record, null);
         CycleRecord saved = cycleRecordRepository.save(record);
         emitPartnerCycleUpdate(userId, "created", saved);
@@ -117,17 +128,20 @@ public class CycleRecordService {
         LocalDate effectiveStartDate = req.getStartDate() != null ? req.getStartDate() : record.getStartDate();
         ensureUniqueStartDate(userId, effectiveStartDate, id);
 
-        // If it is the latest cycle, allow clearing the end date if requested
-        if (isLatest && req.getEndDate() == null) {
+        // Chỉ mở lại kỳ gần nhất khi client yêu cầu rõ ràng. Một field endDate
+        // bị bỏ qua trong JSON cũng deserialize thành null nên không được tự ý xóa.
+        if (isLatest && CycleRecordStatus.ONGOING.equals(req.getStatus())) {
             record.setEndDate(null);
-            User user = userRepository.findById(userId).orElse(null);
-            int defaultPeriodLen = (user != null && user.getDefaultPeriodLength() != null)
-                    ? user.getDefaultPeriodLength()
-                    : DEFAULT_PERIOD_LENGTH;
-            record.setPeriodLength(defaultPeriodLen);
+            record.setStatus(CycleRecordStatus.ONGOING);
+            LocalDate lastBleedingDate = record.getLastBleedingDate() != null
+                    ? record.getLastBleedingDate()
+                    : record.getStartDate();
+            record.setLastBleedingDate(lastBleedingDate);
+            record.setPeriodLength(daysInclusive(record.getStartDate(), lastBleedingDate));
         }
 
-        apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(), req.getIsIgnored());
+        apply(record, req.getStartDate(), req.getEndDate(), req.getCycleLength(), req.getPeriodLength(),
+                req.getNotes(), req.getStatus(), req.getIsIgnored());
         ensureNoOverlap(userId, record, id);
         CycleRecord saved = cycleRecordRepository.save(record);
         emitPartnerCycleUpdate(userId, "updated", saved);
@@ -150,7 +164,8 @@ public class CycleRecordService {
                         CycleRecord record = new CycleRecord();
                         record.setId(sequenceService.next("cycle_records"));
                         record.setUserId(user.getId());
-                        apply(record, startDate, endDate, user.getDefaultCycleLength(), user.getDefaultPeriodLength(), false);
+                        apply(record, startDate, endDate, user.getDefaultCycleLength(), user.getDefaultPeriodLength(),
+                                null, CycleRecordStatus.COMPLETED, false);
                         ensureNoOverlap(user.getId(), record, null);
                         CycleRecord saved = cycleRecordRepository.save(record);
                         emitPartnerCycleUpdate(user.getId(), "created", saved);
@@ -168,18 +183,133 @@ public class CycleRecordService {
         }
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
-        validate(startDate, null, user.getDefaultCycleLength(), user.getDefaultPeriodLength());
-        return cycleRecordRepository.findByUserIdAndStartDate(userId, startDate)
-                .orElseGet(() -> {
-                    CycleRecord record = new CycleRecord();
-                    record.setId(sequenceService.next("cycle_records"));
-                    record.setUserId(userId);
-                    apply(record, startDate, null, user.getDefaultCycleLength(), user.getDefaultPeriodLength(), false);
-                    ensureNoOverlap(userId, record, null);
-                    CycleRecord saved = cycleRecordRepository.save(record);
-                    emitPartnerCycleUpdate(userId, "created", saved);
-                    return saved;
-                });
+        validate(startDate, null, user.getDefaultCycleLength(), 1);
+
+        CycleRecord sameDay = cycleRecordRepository.findByUserIdAndStartDate(userId, startDate).orElse(null);
+        if (sameDay != null) {
+            if (!CycleRecordStatus.COMPLETED.equals(sameDay.getStatus()) && sameDay.getEndDate() == null) {
+                sameDay.setStatus(CycleRecordStatus.ONGOING);
+                sameDay.setLastBleedingDate(startDate);
+                sameDay.setPeriodLength(1);
+                CycleRecord saved = cycleRecordRepository.save(sameDay);
+                emitPartnerCycleUpdate(userId, "updated", saved);
+                return saved;
+            }
+            return sameDay;
+        }
+
+        findOngoingPeriod(userId, startDate).ifPresent(existing -> {
+            throw new ConflictException("Kỳ hiện tại chưa kết thúc. Hãy ghi nhận tiếp hoặc kết thúc kỳ trước khi bắt đầu kỳ mới.");
+        });
+
+        CycleRecord record = new CycleRecord();
+        record.setId(sequenceService.next("cycle_records"));
+        record.setUserId(userId);
+        apply(record, startDate, null, user.getDefaultCycleLength(), 1,
+                null, CycleRecordStatus.ONGOING, false);
+        record.setLastBleedingDate(startDate);
+        ensureNoOverlap(userId, record, null);
+        CycleRecord saved = cycleRecordRepository.save(record);
+        emitPartnerCycleUpdate(userId, "created", saved);
+        return saved;
+    }
+
+    @CacheEvict(value = "ai_context", key = "#userId")
+    public CycleRecord syncPeriodFromDailyLog(String userId,
+                                              LocalDate logDate,
+                                              FlowIntensity flowIntensity,
+                                              boolean confirmStart,
+                                              boolean confirmEnd) {
+        CycleRecord active = confirmStart
+                ? confirmPeriodStart(userId, logDate)
+                : findOngoingPeriod(userId, logDate).orElse(null);
+
+        if (active == null) {
+            if (confirmEnd) {
+                throw new IllegalArgumentException("Không có kỳ kinh đang diễn ra để kết thúc");
+            }
+            return null;
+        }
+        if (logDate.isBefore(active.getStartDate())) {
+            throw new IllegalArgumentException("Ngày ghi nhận không thể trước ngày bắt đầu kỳ kinh");
+        }
+        if (daysInclusive(active.getStartDate(), logDate) > MAX_PERIOD_LENGTH
+                && flowIntensity != null
+                && !FlowIntensity.NONE.equals(flowIntensity)) {
+            throw new IllegalArgumentException("Một kỳ kinh không thể dài hơn 30 ngày");
+        }
+
+        if (flowIntensity != null && !FlowIntensity.NONE.equals(flowIntensity)) {
+            LocalDate lastBleedingDate = active.getLastBleedingDate();
+            if (lastBleedingDate == null || logDate.isAfter(lastBleedingDate)) {
+                active.setLastBleedingDate(logDate);
+            }
+            active.setStatus(CycleRecordStatus.ONGOING);
+            active.setEndDate(null);
+            active.setPeriodLength(daysInclusive(active.getStartDate(), active.getLastBleedingDate()));
+        } else {
+            recalculateOngoingPeriodFromLogs(userId, active);
+        }
+
+        if (confirmEnd) {
+            LocalDate actualEnd = flowIntensity != null && !FlowIntensity.NONE.equals(flowIntensity)
+                    ? logDate
+                    : active.getLastBleedingDate();
+            if (actualEnd == null) {
+                actualEnd = active.getStartDate();
+            }
+            active.setEndDate(actualEnd);
+            active.setLastBleedingDate(actualEnd);
+            active.setPeriodLength(daysInclusive(active.getStartDate(), actualEnd));
+            active.setStatus(CycleRecordStatus.COMPLETED);
+        }
+
+        CycleRecord saved = cycleRecordRepository.save(active);
+        emitPartnerCycleUpdate(userId, confirmEnd ? "completed" : "updated", saved);
+        return saved;
+    }
+
+    @CacheEvict(value = "ai_context", key = "#userId")
+    public void reconcilePeriodAfterLogDeletion(String userId, LocalDate logDate) {
+        findOngoingPeriod(userId, logDate).ifPresent(active -> {
+            recalculateOngoingPeriodFromLogs(userId, active);
+            CycleRecord saved = cycleRecordRepository.save(active);
+            emitPartnerCycleUpdate(userId, "updated", saved);
+        });
+    }
+
+    private void recalculateOngoingPeriodFromLogs(String userId, CycleRecord active) {
+        LocalDate today = LocalDate.now();
+        LocalDate upperBound = active.getStartDate().plusDays(MAX_PERIOD_LENGTH - 1L);
+        if (upperBound.isAfter(today)) {
+            upperBound = today;
+        }
+        LocalDate lastBleedingDate = dailyLogRepository
+                .findByUserIdAndLogDateBetweenOrderByLogDateDesc(userId, active.getStartDate(), upperBound)
+                .stream()
+                .filter(log -> log.getFlowIntensity() != null && !FlowIntensity.NONE.equals(log.getFlowIntensity()))
+                .map(DailyLog::getLogDate)
+                .max(LocalDate::compareTo)
+                .orElse(active.getStartDate());
+        active.setLastBleedingDate(lastBleedingDate);
+        active.setPeriodLength(daysInclusive(active.getStartDate(), lastBleedingDate));
+        active.setStatus(CycleRecordStatus.ONGOING);
+        active.setEndDate(null);
+    }
+
+    private java.util.Optional<CycleRecord> findOngoingPeriod(String userId, LocalDate referenceDate) {
+        return cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId).stream()
+                .filter(record -> record.getStartDate() != null)
+                .filter(record -> !record.getStartDate().isAfter(referenceDate))
+                .filter(record -> isOngoingRecord(record, referenceDate)
+                        || (record.getStatus() == null
+                        && record.getEndDate() == null
+                        && daysInclusive(record.getStartDate(), referenceDate) <= MAX_PERIOD_LENGTH))
+                .findFirst();
+    }
+
+    private boolean isOngoingRecord(CycleRecord record, LocalDate referenceDate) {
+        return CycleRecordStatus.ONGOING.equals(record.getStatus());
     }
 
     @CacheEvict(value = "ai_context", key = "#userId")
@@ -220,6 +350,9 @@ public class CycleRecordService {
         if (sorted.isEmpty()) {
             return emptyInsights();
         }
+        LocalDate today = LocalDate.now();
+        CycleRecord latest = sorted.get(sorted.size() - 1);
+        boolean periodOngoing = isOngoingRecord(latest, today);
 
         List<Integer> intervals = calculateIntervals(sorted);
         List<Integer> typicalIntervals = intervals.stream().filter(this::isTypicalCycleLength).toList();
@@ -229,6 +362,7 @@ public class CycleRecordService {
                 .toList();
         List<Integer> typicalRecordedCycleLengths = recordedCycleLengths.stream().filter(this::isTypicalCycleLength).toList();
         List<Integer> periodLengths = sorted.stream()
+                .filter(record -> !isOngoingRecord(record, today))
                 .map(CycleRecord::getPeriodLength)
                 .filter(this::isPlausiblePeriodLength)
                 .toList();
@@ -248,12 +382,13 @@ public class CycleRecordService {
                 : averageOrNull(!typicalIntervals.isEmpty() ? typicalIntervals : intervals);
         Double averagePeriodLength = averageOrNull(!typicalPeriodLengths.isEmpty() ? typicalPeriodLengths : periodLengths);
 
-        CycleRecord latest = sorted.get(sorted.size() - 1);
         LocalDate lastStartDate = latest.getStartDate();
-        LocalDate lastEndDate = latest.getEndDate() != null
-                ? latest.getEndDate()
-                : lastStartDate.plusDays(estimatedPeriodLength - 1L);
-        LocalDate today = LocalDate.now();
+        LocalDate lastBleedingDate = periodOngoing
+                ? recordedEndDate(latest)
+                : latest.getEndDate() != null
+                    ? latest.getEndDate()
+                    : recordedEndDate(latest);
+        LocalDate lastEndDate = periodOngoing ? null : lastBleedingDate;
         LocalDate estimatedPeriodStartDate = lastStartDate.plusDays(estimatedCycleLength);
         LocalDate estimatedPeriodEndDate = estimatedPeriodStartDate.plusDays(estimatedPeriodLength - 1L);
         LocalDate estimatedOvulationDate = estimatedPeriodStartDate.minusDays(14);
@@ -261,18 +396,23 @@ public class CycleRecordService {
         LocalDate fertileWindowEndDate = estimatedOvulationDate.plusDays(1);
 
         int recordedCycleDay = (int) ChronoUnit.DAYS.between(lastStartDate, today) + 1;
-        Integer confirmedPeriodDay = !today.isBefore(lastStartDate) && !today.isAfter(lastEndDate)
-                ? recordedCycleDay
-                : null;
+        Integer confirmedPeriodDay = null;
+        if (periodOngoing) {
+            confirmedPeriodDay = Math.max(1, latest.getPeriodLength() != null
+                    ? latest.getPeriodLength()
+                    : daysInclusive(lastStartDate, lastBleedingDate));
+        } else if (!today.isBefore(lastStartDate) && !today.isAfter(lastBleedingDate)) {
+            confirmedPeriodDay = recordedCycleDay;
+        }
         String periodStatus;
         Integer estimatedCycleDay;
         String estimatedPhase;
         LocalDate estimatedCurrentStartDate;
-        if (confirmedPeriodDay != null) {
+        if (periodOngoing || confirmedPeriodDay != null) {
             periodStatus = "CONFIRMED";
             estimatedCurrentStartDate = lastStartDate;
             estimatedCycleDay = recordedCycleDay;
-            estimatedPhase = resolvePhase(recordedCycleDay, estimatedPeriodLength, estimatedCycleLength);
+            estimatedPhase = "Kinh nguyệt";
         } else if (today.isBefore(estimatedPeriodStartDate)) {
             periodStatus = "UPCOMING";
             estimatedCurrentStartDate = lastStartDate;
@@ -301,6 +441,9 @@ public class CycleRecordService {
                 || recordedCycleLengths.stream().anyMatch(value -> !isTypicalCycleLength(value))
                 || periodLengths.stream().anyMatch(value -> !isTypicalPeriodLength(value));
         List<String> warnings = buildWarnings(hasOutliers, intervals.size());
+        if (periodOngoing && confirmedPeriodDay != null && confirmedPeriodDay > TYPICAL_MAX_PERIOD_LENGTH) {
+            warnings.add("Kỳ kinh đã được ghi nhận trên 7 ngày. Bạn vẫn có thể tiếp tục theo dõi, nhưng nên trao đổi với bác sĩ nếu tình trạng kéo dài hoặc lượng máu nhiều.");
+        }
         String predictionConfidence = typicalIntervals.size() >= 3 ? "HIGH" : typicalIntervals.isEmpty() ? "LOW" : "MEDIUM";
         RegularityAssessment regularity = assessRegularity(sorted, intervals, periodLengths, hasOutliers);
         List<CycleRecordInsightResponse.CycleTrendPoint> trendPoints = buildTrendPoints(sorted, intervals);
@@ -313,6 +456,7 @@ public class CycleRecordService {
                 .lastStartDate(lastStartDate)
                 .lastRecordedStartDate(lastStartDate)
                 .lastRecordedEndDate(lastEndDate)
+                .lastBleedingDate(lastBleedingDate)
                 .estimatedCurrentCycleStartDate(estimatedCurrentStartDate)
                 .estimatedPeriodStartDate(estimatedPeriodStartDate)
                 .estimatedPeriodEndDate(estimatedPeriodEndDate)
@@ -324,6 +468,7 @@ public class CycleRecordService {
                 .currentCycleDay(estimatedCycleDay)
                 .currentPhase(estimatedPhase)
                 .periodStatus(periodStatus)
+                .periodOngoing(periodOngoing)
                 .confirmedPeriodDay(confirmedPeriodDay)
                 .estimatedCycleDay(estimatedCycleDay)
                 .estimatedPhase(estimatedPhase)
@@ -597,15 +742,22 @@ public class CycleRecordService {
     }
 
     private LocalDate effectiveEndDate(CycleRecord record) {
+        return recordedEndDate(record);
+    }
+
+    private LocalDate recordedEndDate(CycleRecord record) {
         if (record.getEndDate() != null) {
             return record.getEndDate();
+        }
+        if (record.getLastBleedingDate() != null) {
+            return record.getLastBleedingDate();
         }
         int periodLength = record.getPeriodLength() != null ? record.getPeriodLength() : DEFAULT_PERIOD_LENGTH;
         return record.getStartDate().plusDays(periodLength - 1L);
     }
 
     private void apply(CycleRecord record, LocalDate startDate, LocalDate endDate, Integer cycleLength,
-                       Integer periodLength, Boolean isIgnored) {
+                       Integer periodLength, String notes, CycleRecordStatus status, Boolean isIgnored) {
         LocalDate effectiveStartDate = startDate != null ? startDate : record.getStartDate();
         LocalDate effectiveEndDate = endDate != null ? endDate : record.getEndDate();
         validate(effectiveStartDate, effectiveEndDate, cycleLength, periodLength);
@@ -614,9 +766,9 @@ public class CycleRecordService {
         }
         if (endDate != null) {
             record.setEndDate(endDate);
-            if (periodLength == null) {
-                record.setPeriodLength((int) ChronoUnit.DAYS.between(record.getStartDate(), endDate) + 1);
-            }
+            record.setLastBleedingDate(endDate);
+            record.setStatus(CycleRecordStatus.COMPLETED);
+            record.setPeriodLength(daysInclusive(record.getStartDate(), endDate));
         }
         if (cycleLength != null) {
             record.setCycleLength(cycleLength);
@@ -624,11 +776,26 @@ public class CycleRecordService {
         if (periodLength != null) {
             record.setPeriodLength(periodLength);
         }
+        if (notes != null) {
+            record.setNotes(notes.trim());
+        }
+        if (status != null) {
+            record.setStatus(status);
+        }
         if (record.getCycleLength() == null) {
             record.setCycleLength(DEFAULT_CYCLE_LENGTH);
         }
         if (record.getPeriodLength() == null) {
-            record.setPeriodLength(DEFAULT_PERIOD_LENGTH);
+            record.setPeriodLength(CycleRecordStatus.ONGOING.equals(record.getStatus()) ? 1 : DEFAULT_PERIOD_LENGTH);
+        }
+        if (CycleRecordStatus.ONGOING.equals(record.getStatus())) {
+            record.setEndDate(null);
+            if (record.getLastBleedingDate() == null) {
+                record.setLastBleedingDate(record.getStartDate());
+            }
+            record.setPeriodLength(daysInclusive(record.getStartDate(), record.getLastBleedingDate()));
+        } else if (record.getStatus() == null && record.getEndDate() != null) {
+            record.setStatus(CycleRecordStatus.COMPLETED);
         }
         if (isIgnored != null) {
             record.setIsIgnored(isIgnored);
@@ -636,6 +803,10 @@ public class CycleRecordService {
         if (record.getIsIgnored() == null) {
             record.setIsIgnored(false);
         }
+    }
+
+    private int daysInclusive(LocalDate startDate, LocalDate endDate) {
+        return (int) ChronoUnit.DAYS.between(startDate, endDate) + 1;
     }
 
     private void validate(LocalDate startDate, LocalDate endDate, Integer cycleLength, Integer periodLength) {

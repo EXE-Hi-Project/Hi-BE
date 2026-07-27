@@ -6,9 +6,14 @@ import com.hi.api.dto.request.NotificationSettingsRequest;
 import com.hi.api.dto.request.PartnerSharingPreferencesRequest;
 import com.hi.api.dto.request.PresignAvatarUploadRequest;
 import com.hi.api.dto.request.UpdateProfileRequest;
+import com.hi.api.dto.request.RegisterUserDeviceRequest;
+import com.hi.api.dto.request.DeleteMyAccountRequest;
 import com.hi.api.model.User;
+import com.hi.api.model.UserDevice;
 import com.hi.api.service.UserAvatarService;
+import com.hi.api.service.UserDeviceService;
 import com.hi.api.service.UserService;
+import com.hi.api.service.AccountDeletionService;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -21,6 +26,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
@@ -33,10 +39,49 @@ public class UserController {
 
     private final UserService userService;
     private final UserAvatarService userAvatarService;
+    private final UserDeviceService userDeviceService;
+    private final AccountDeletionService accountDeletionService;
 
-    public UserController(UserService userService, UserAvatarService userAvatarService) {
+    public UserController(
+            UserService userService,
+            UserAvatarService userAvatarService,
+            UserDeviceService userDeviceService,
+            AccountDeletionService accountDeletionService) {
         this.userService = userService;
         this.userAvatarService = userAvatarService;
+        this.userDeviceService = userDeviceService;
+        this.accountDeletionService = accountDeletionService;
+    }
+
+    @DeleteMapping("/me")
+    public ResponseEntity<Map<String, Object>> deleteMyAccount(
+            @AuthenticationPrincipal User user,
+            @Valid @RequestBody DeleteMyAccountRequest request) {
+        accountDeletionService.delete(user.getId(), request);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Tài khoản và dữ liệu của bạn đã được xóa"
+        ));
+    }
+
+    @PostMapping("/devices")
+    public ResponseEntity<Map<String, Object>> registerDevice(
+            @AuthenticationPrincipal User user,
+            @Valid @RequestBody RegisterUserDeviceRequest request) {
+        UserDevice device = userDeviceService.register(user.getId(), request);
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "message", "Đã đăng ký thiết bị",
+                "data", Map.of("deviceId", device.getDeviceId(), "active", device.getActive())
+        ));
+    }
+
+    @DeleteMapping("/devices/{deviceId}")
+    public ResponseEntity<Map<String, Object>> deactivateDevice(
+            @AuthenticationPrincipal User user,
+            @PathVariable String deviceId) {
+        userDeviceService.deactivate(user.getId(), deviceId);
+        return ResponseEntity.ok(Map.of("success", true, "message", "Đã gỡ thiết bị"));
     }
 
     @GetMapping("/profile")
