@@ -27,4 +27,6 @@ jobs:
             exit 1
           fi
       - name: Test backend
-        run: ./mvnw -q test
+        run: |
+          chmod +x mvnw
+          ./mvnw -q test
