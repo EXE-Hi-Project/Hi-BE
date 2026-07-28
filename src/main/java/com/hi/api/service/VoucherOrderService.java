@@ -9,13 +9,16 @@ import com.hi.api.model.VoucherOrderStatus;
 import com.hi.api.repository.TransactionRepository;
 import com.hi.api.repository.VoucherOrderRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import vn.payos.PayOS;
 import vn.payos.model.v2.paymentRequests.CreatePaymentLinkRequest;
 import vn.payos.model.v2.paymentRequests.CreatePaymentLinkResponse;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +41,9 @@ public class VoucherOrderService {
 
     @Value("${app.mobile-return-url:https://hilover.space}")
     private String mobileReturnUrl;
+
+    @Value("${app.payment.return-url.allowed-origins:${app.client-url}}")
+    private String allowedReturnOrigins;
 
     public VoucherOrderService(VoucherOrderRepository voucherOrderRepository,
                                TransactionRepository transactionRepository,
@@ -100,7 +106,16 @@ public class VoucherOrderService {
                 .returnUrl(baseUrl + "/products?voucherOrderId=" + orderId)
                 .cancelUrl(baseUrl + "/products?voucherCanceled=1")
                 .build();
-        CreatePaymentLinkResponse response = payOS.paymentRequests().create(request);
+        voucherOrderRepository.save(order);
+        CreatePaymentLinkResponse response;
+        try {
+            response = payOS.paymentRequests().create(request);
+        } catch (Exception exception) {
+            order.setStatus(VoucherOrderStatus.CANCELED);
+            order.setFailureReason("Khong tao duoc phien thanh toan voucher");
+            voucherOrderRepository.save(order);
+            throw exception;
+        }
         order.setCheckoutUrl(response.getCheckoutUrl());
         VoucherOrder saved = voucherOrderRepository.save(order);
 
@@ -112,6 +127,10 @@ public class VoucherOrderService {
 
     public List<VoucherOrder> getMyOrders(User user) {
         return voucherOrderRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
+    }
+
+    boolean orderCodeExists(Long orderCode) {
+        return voucherOrderRepository.existsByOrderCode(orderCode);
     }
 
     public VoucherOrder getOwnedOrder(User user, Long id) {
@@ -134,7 +153,7 @@ public class VoucherOrderService {
         return voucherOrderRepository.save(order);
     }
 
-    public synchronized boolean handlePaymentWebhook(Long orderCode, Long paidAmount) {
+    public boolean handlePaymentWebhook(Long orderCode, Long paidAmount) {
         VoucherOrder order = voucherOrderRepository.findByOrderCode(orderCode).orElse(null);
         if (order == null) {
             return false;
@@ -154,33 +173,66 @@ public class VoucherOrderService {
             return true;
         }
 
-        order.setStatus(VoucherOrderStatus.PAID);
-        order.setPaidAt(Instant.now());
-        voucherOrderRepository.save(order);
+        Instant claimedAt = Instant.now();
+        long claimed = voucherOrderRepository.claimForIssuance(
+                order.getId(),
+                List.of(VoucherOrderStatus.PAYMENT_PENDING, VoucherOrderStatus.ISSUE_RETRY),
+                claimedAt
+        );
+        if (claimed == 0) {
+            return true;
+        }
+        order = voucherOrderRepository.findById(order.getId()).orElse(order);
+        order.setStatus(VoucherOrderStatus.ISSUING);
+        order.setPaidAt(claimedAt);
+        order.setIssuingStartedAt(claimedAt);
 
         try {
-            order.setStatus(VoucherOrderStatus.ISSUING);
-            voucherOrderRepository.save(order);
             AffiliateProduct product = affiliateProductService.getById(order.getProductId());
             GotItBizClient.IssuedVoucher issuedVoucher = gotItBizClient.issueVoucher(order, product);
             order.setVoucherCode(issuedVoucher.code());
             order.setVoucherLink(issuedVoucher.link());
             order.setGotItStatus(issuedVoucher.status());
             order.setIssuedAt(Instant.now());
+            order.setIssuingStartedAt(null);
             order.setStatus(VoucherOrderStatus.ISSUED);
             voucherOrderRepository.save(order);
+        } catch (Exception ex) {
+            order.setStatus(VoucherOrderStatus.REFUND_REQUIRED);
+            order.setIssuingStartedAt(null);
+            order.setFailureReason("Khong phat hanh duoc voucher tu nha cung cap");
+            voucherOrderRepository.save(order);
+            notifyRefundRequired(order);
+            return true;
+        }
+
+        try {
             sendVoucherEmail(order);
             order.setDeliveredAt(Instant.now());
             order.setStatus(VoucherOrderStatus.DELIVERED);
             VoucherOrder delivered = voucherOrderRepository.save(order);
             notifyDelivered(delivered);
-        } catch (Exception ex) {
-            order.setStatus(VoucherOrderStatus.REFUND_REQUIRED);
-            order.setFailureReason(ex.getMessage());
+        } catch (Exception emailError) {
+            // The voucher has already been issued. Keep it available in-app and
+            // let the user retry delivery instead of incorrectly requesting a refund.
+            order.setFailureReason("Voucher da phat hanh nhung email chua gui duoc");
             voucherOrderRepository.save(order);
-            notifyRefundRequired(order);
         }
         return true;
+    }
+
+    @Scheduled(cron = "0 */10 * * * ?", zone = "Asia/Ho_Chi_Minh")
+    public void reconcileStaleIssuingOrders() {
+        Instant cutoff = Instant.now().minus(Duration.ofMinutes(15));
+        for (VoucherOrder order : voucherOrderRepository.findByStatusAndIssuingStartedAtBefore(
+                VoucherOrderStatus.ISSUING,
+                cutoff)) {
+            order.setStatus(VoucherOrderStatus.REFUND_REQUIRED);
+            order.setIssuingStartedAt(null);
+            order.setFailureReason("Qua thoi gian doi phat hanh voucher; can doi soat thu cong");
+            VoucherOrder saved = voucherOrderRepository.save(order);
+            notifyRefundRequired(saved);
+        }
     }
 
     private long positiveAmount(BigDecimal price) {
@@ -209,9 +261,22 @@ public class VoucherOrderService {
     }
 
     String resolveReturnBaseUrl(String originUrl, CreateVoucherCheckoutRequest.Client client) {
-        String value = CreateVoucherCheckoutRequest.Client.MOBILE.equals(client)
-                ? mobileReturnUrl
-                : (originUrl == null || originUrl.isBlank() ? clientUrl : originUrl);
+        if (CreateVoucherCheckoutRequest.Client.MOBILE.equals(client)) {
+            return normalizeOrigin(mobileReturnUrl);
+        }
+        String fallback = normalizeOrigin(clientUrl);
+        if (originUrl == null || originUrl.isBlank()) {
+            return fallback;
+        }
+        String requested = normalizeOrigin(originUrl);
+        boolean allowed = Arrays.stream(allowedReturnOrigins.split(","))
+                .map(this::normalizeOrigin)
+                .anyMatch(requested::equals);
+        return allowed ? requested : fallback;
+    }
+
+    private String normalizeOrigin(String origin) {
+        String value = origin == null ? "" : origin.trim();
         while (value.endsWith("/")) {
             value = value.substring(0, value.length() - 1);
         }

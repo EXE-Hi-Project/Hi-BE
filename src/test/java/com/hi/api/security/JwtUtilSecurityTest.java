@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class JwtUtilSecurityTest {
@@ -32,5 +33,17 @@ class JwtUtilSecurityTest {
         );
 
         assertDoesNotThrow(jwtUtil::validateJwtSecret);
+    }
+
+    @Test
+    void storesAuthenticationVersionInToken() {
+        JwtUtil jwtUtil = new JwtUtil();
+        ReflectionTestUtils.setField(jwtUtil, "jwtSecret", "0123456789abcdef0123456789abcdef");
+        ReflectionTestUtils.setField(jwtUtil, "jwtExpirationMs", 60_000L);
+
+        String token = jwtUtil.generateToken("user-1", 7);
+
+        assertEquals("user-1", jwtUtil.getUserIdFromToken(token));
+        assertEquals(7, jwtUtil.getAuthVersionFromToken(token));
     }
 }

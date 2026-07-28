@@ -81,7 +81,18 @@ public class CycleRecordService {
     }
 
     public List<CycleRecord> getCycleRecords(String userId, LocalDate from, LocalDate to) {
-        List<CycleRecord> records = cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId);
+        List<CycleRecord> records;
+        if (from != null && to != null) {
+            records = cycleRecordRepository.findByUserIdAndStartDateBetweenOrderByStartDateDesc(
+                    userId, from.minusDays(MAX_CYCLE_LENGTH), to);
+        } else if (from != null) {
+            records = cycleRecordRepository.findByUserIdAndStartDateGreaterThanEqualOrderByStartDateDesc(
+                    userId, from.minusDays(MAX_CYCLE_LENGTH));
+        } else if (to != null) {
+            records = cycleRecordRepository.findByUserIdAndStartDateLessThanEqualOrderByStartDateDesc(userId, to);
+        } else {
+            records = cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId);
+        }
         if (from != null || to != null) {
             records = records.stream()
                     .filter(record -> {
@@ -821,17 +832,9 @@ public class CycleRecordService {
                                              int estimatedPeriodLength,
                                              boolean fertilityEstimateAvailable) {
         LocalDate from = sortedRecords.get(Math.max(0, sortedRecords.size() - 6)).getStartDate();
-        List<DailyLog> logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
-        if (from != null) {
-            LocalDate today = today();
-            logs = logs.stream()
-                    .filter(log -> {
-                        LocalDate d = log.getLogDate();
-                        if (d == null) return false;
-                        return !d.isBefore(from) && !d.isAfter(today);
-                    })
-                    .collect(java.util.stream.Collectors.toList());
-        }
+        List<DailyLog> logs = from == null
+                ? dailyLogRepository.findByUserIdOrderByLogDateDesc(userId)
+                : dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(userId, from, today());
         if (logs.isEmpty()) {
             return SymptomAnalytics.empty();
         }

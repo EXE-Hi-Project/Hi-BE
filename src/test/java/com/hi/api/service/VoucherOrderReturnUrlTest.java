@@ -27,14 +27,23 @@ class VoucherOrderReturnUrlTest {
         );
         ReflectionTestUtils.setField(service, "clientUrl", "https://hilover.space/");
         ReflectionTestUtils.setField(service, "mobileReturnUrl", "https://m.hilover.space/");
+        ReflectionTestUtils.setField(
+                service,
+                "allowedReturnOrigins",
+                "https://hilover.space,https://www.hilover.space"
+        );
 
         assertEquals(
                 "https://m.hilover.space",
                 service.resolveReturnBaseUrl("https://attacker.example", CreateVoucherCheckoutRequest.Client.MOBILE)
         );
         assertEquals(
-                "https://allowed-web.example",
-                service.resolveReturnBaseUrl("https://allowed-web.example/", CreateVoucherCheckoutRequest.Client.WEB)
+                "https://hilover.space",
+                service.resolveReturnBaseUrl("https://attacker.example/", CreateVoucherCheckoutRequest.Client.WEB)
+        );
+        assertEquals(
+                "https://www.hilover.space",
+                service.resolveReturnBaseUrl("https://www.hilover.space/", CreateVoucherCheckoutRequest.Client.WEB)
         );
     }
 }

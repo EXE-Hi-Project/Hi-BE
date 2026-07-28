@@ -29,7 +29,7 @@ public class NotificationService {
     }
 
     public List<Notification> getNotifications(String userId) {
-        return notificationRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        return notificationRepository.findTop100ByUserIdOrderByCreatedAtDesc(userId);
     }
 
     public void markAllRead(String userId) {

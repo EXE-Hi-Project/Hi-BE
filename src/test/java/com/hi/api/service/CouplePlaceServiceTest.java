@@ -73,7 +73,9 @@ class CouplePlaceServiceTest {
                 restTemplate,
                 partnerAccessService,
                 mock(software.amazon.awssdk.services.s3.S3Client.class),
-                mock(software.amazon.awssdk.services.s3.presigner.S3Presigner.class)
+                mock(software.amazon.awssdk.services.s3.presigner.S3Presigner.class),
+                mock(RateLimitService.class),
+                mock(PendingMediaUploadService.class)
         );
         ReflectionTestUtils.setField(service, "photonUrl", "https://photon.komoot.io/api");
         ReflectionTestUtils.setField(service, "tomTomSearchApiKey", "");

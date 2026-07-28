@@ -4,13 +4,17 @@ import com.hi.api.model.User;
 import com.hi.api.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class PartnerExperienceScheduler {
@@ -49,19 +53,30 @@ public class PartnerExperienceScheduler {
 
     private void forEachPair(PairConsumer consumer) {
         Set<String> processed = new HashSet<>();
-        for (User user : userRepository.findAll()) {
-            if (user.getPartnerId() == null || user.getPartnerId().isBlank()) continue;
-            userRepository.findById(user.getPartnerId()).ifPresent(partner -> {
-                if (!user.getId().equals(partner.getPartnerId())) return;
+        int pageNumber = 0;
+        Page<User> page;
+        do {
+            page = userRepository.findActiveUsers(PageRequest.of(pageNumber++, 200));
+            Map<String, User> partners = userRepository.findAllById(page.getContent().stream()
+                            .map(User::getPartnerId)
+                            .filter(id -> id != null && !id.isBlank())
+                            .collect(Collectors.toSet()))
+                    .stream()
+                    .collect(Collectors.toMap(User::getId, user -> user));
+
+            for (User user : page.getContent()) {
+                if (user.getPartnerId() == null || user.getPartnerId().isBlank()) continue;
+                User partner = partners.get(user.getPartnerId());
+                if (partner == null || !user.getId().equals(partner.getPartnerId())) continue;
                 String pairKey = partnerAccessService.pairKey(user.getId(), partner.getId());
-                if (!processed.add(pairKey)) return;
+                if (!processed.add(pairKey)) continue;
                 try {
                     consumer.accept(user, partner);
                 } catch (Exception error) {
                     log.warn("Không thể tạo trải nghiệm Người ấy cho cặp {}: {}", pairKey, error.getMessage());
                 }
-            });
-        }
+            }
+        } while (page.hasNext());
     }
 
     @FunctionalInterface

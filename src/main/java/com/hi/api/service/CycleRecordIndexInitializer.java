@@ -31,6 +31,9 @@ public class CycleRecordIndexInitializer implements ApplicationRunner {
     @Value("${app.migration.health-data.dry-run:true}")
     private boolean migrationDryRun;
 
+    @Value("${app.migration.cycle-index-normalization-enabled:false}")
+    private boolean normalizationEnabled;
+
     public CycleRecordIndexInitializer(MongoTemplate mongoTemplate,
                                        CycleRecordRepository cycleRecordRepository) {
         this.mongoTemplate = mongoTemplate;
@@ -42,8 +45,10 @@ public class CycleRecordIndexInitializer implements ApplicationRunner {
         if (migrationEnabled && migrationDryRun) {
             return;
         }
-        normalizeLegacyRecords();
-        normalizeDuplicateActiveRecords();
+        if (normalizationEnabled) {
+            normalizeLegacyRecords();
+            normalizeDuplicateActiveRecords();
+        }
         mongoTemplate.indexOps(CycleRecord.class).ensureIndex(
                 new Index()
                         .on("userId", Sort.Direction.ASC)

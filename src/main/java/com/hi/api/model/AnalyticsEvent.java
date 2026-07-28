@@ -38,9 +38,13 @@ public class AnalyticsEvent {
 
     private String target; // route path for page view, element id / description for click
 
-    private String elementText; // text of clicked element
+    /**
+     * Kept for backward-compatible analytics reads. New events never persist
+     * visible page text because it may contain personal or health information.
+     */
+    private String elementText;
 
-    @Indexed
+    @Indexed(expireAfter = "90d")
     @CreatedDate
     private Instant createdAt;
 

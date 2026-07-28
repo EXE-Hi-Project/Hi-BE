@@ -166,20 +166,10 @@ public class ChatContextService {
         LocalDate start = latest.getStartDate();
         int periodLength = latest.getPeriodLength() != null ? latest.getPeriodLength() : 5;
         LocalDate end = latest.getEndDate() != null ? latest.getEndDate() : latest.getStartDate().plusDays(Math.max(1, periodLength) - 1L);
-        List<DailyLog> logs = distinctLogsByDate(dailyLogRepository.findByUserIdOrderByLogDateDesc(userId));
-        if (start != null || end != null) {
-            final LocalDate finalStart = start;
-            final LocalDate finalEnd = end;
-            logs = logs.stream()
-                    .filter(logItem -> {
-                        LocalDate d = logItem.getLogDate();
-                        if (d == null) return false;
-                        boolean afterStart = (finalStart == null || !d.isBefore(finalStart));
-                        boolean beforeEnd = (finalEnd == null || !d.isAfter(finalEnd));
-                        return afterStart && beforeEnd;
-                    })
-                    .collect(Collectors.toList());
-        }
+        List<DailyLog> logs = start != null && end != null
+                ? dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(userId, start, end)
+                : dailyLogRepository.findByUserIdOrderByLogDateDesc(userId, PageRequest.of(0, 10)).getContent();
+        logs = distinctLogsByDate(logs);
         if (logs.isEmpty()) {
             context.append("- Triệu chứng trong kỳ gần nhất: chưa có nhật ký triệu chứng.\n");
             return;

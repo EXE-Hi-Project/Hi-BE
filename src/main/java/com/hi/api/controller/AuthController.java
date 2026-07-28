@@ -257,7 +257,8 @@ public class AuthController {
 
     @PostMapping("/logout")
     @SecurityRequirement(name = "Bearer Authentication")
-    public ResponseEntity<Map<String, Object>> logout() {
+    public ResponseEntity<Map<String, Object>> logout(@AuthenticationPrincipal User user) {
+        authService.revokeSessions(user);
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, expiredAuthCookie().toString())
                 .body(Map.of("success", true, "message", "Đã đăng xuất"));

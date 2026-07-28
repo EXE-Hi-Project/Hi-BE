@@ -84,7 +84,11 @@ public class PartnerCareSuggestionService {
         suggestion.setSuggestionDate(date);
         String partnerName = partner.getName() == null || partner.getName().isBlank() ? "Người ấy" : partner.getName();
 
-        DailyLog latest = dailyLogRepository.findByUserIdOrderByLogDateDesc(partner.getId()).stream().findFirst().orElse(null);
+        DailyLog latest = dailyLogRepository
+                .findByUserIdOrderByLogDateDesc(partner.getId(), org.springframework.data.domain.PageRequest.of(0, 1))
+                .stream()
+                .findFirst()
+                .orElse(null);
         if (latest != null && Boolean.TRUE.equals(sharing.getShareDetailedSymptoms())) {
             List<DailyLogSymptom> relations = symptomRepository.findByDailyLogId(latest.getId());
             List<String> symptoms = dictionaryRepository.findAllById(

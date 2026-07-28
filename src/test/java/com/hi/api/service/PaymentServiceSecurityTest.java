@@ -8,8 +8,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Instant;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -107,6 +109,60 @@ class PaymentServiceSecurityTest {
         verify(userRepository).save(user);
         verify(transactionRepository).save(any(Transaction.class));
         verify(realtimeEventService, times(2)).sendSubscription(any(), any(), any());
+    }
+
+    @Test
+    void webhookResolvesUserFromTransactionEvenWhenSubscriptionContainsAnotherOrderCode() {
+        UserRepository userRepository = mock(UserRepository.class);
+        TransactionRepository transactionRepository = mock(TransactionRepository.class);
+        PaymentService service = new PaymentService(
+                userRepository,
+                transactionRepository,
+                null,
+                mock(RealtimeEventService.class),
+                mock(VoucherOrderService.class),
+                mock(PlanPricingService.class)
+        );
+        Transaction paidTransaction = new Transaction();
+        paidTransaction.setOrderCode(1001L);
+        paidTransaction.setUserId("user-1");
+        paidTransaction.setPlan("PREMIUM_MONTHLY");
+        paidTransaction.setAmount(49_000L);
+        paidTransaction.setPaidAmount(49_000L);
+        paidTransaction.setStatus("pending");
+
+        User user = new User();
+        user.setId("user-1");
+        user.setEmail("user@example.com");
+        User.SubscriptionInfo subscription = new User.SubscriptionInfo();
+        subscription.setPayosOrderCode(2002L);
+        subscription.setStatus("pending");
+        user.setSubscription(subscription);
+
+        when(transactionRepository.findByOrderCode(1001L)).thenReturn(Optional.of(paidTransaction));
+        when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
+        when(transactionRepository.save(any(Transaction.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.handleSubscriptionPayment(1001L, 49_000L);
+
+        assertEquals("active", user.getSubscription().getStatus());
+        assertEquals(1001L, user.getSubscription().getPayosOrderCode());
+        assertEquals("completed", paidTransaction.getStatus());
+        verify(userRepository).save(user);
+    }
+
+    @Test
+    void rejectsAnotherCheckoutWhilePaymentIsPending() {
+        PaymentService service = service();
+        User user = new User();
+        User.SubscriptionInfo subscription = new User.SubscriptionInfo();
+        subscription.setStatus("pending");
+        user.setSubscription(subscription);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service.createCheckoutSession(user, "monthly", "https://hilover.space")
+        );
     }
 
     private PaymentService service() {
