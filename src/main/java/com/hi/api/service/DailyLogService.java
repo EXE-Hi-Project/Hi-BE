@@ -16,6 +16,7 @@ import com.hi.api.repository.SymptomDictionaryRepository;
 import com.hi.api.repository.UserRepository;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -57,17 +58,15 @@ public class DailyLogService {
     }
 
     public List<DailyLog> getLogs(String userId, LocalDate from, LocalDate to) {
-        List<DailyLog> logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
-        if (from != null || to != null) {
-            logs = logs.stream()
-                    .filter(log -> {
-                        LocalDate d = log.getLogDate();
-                        if (d == null) return false;
-                        boolean afterFrom = (from == null || !d.isBefore(from));
-                        boolean beforeTo = (to == null || !d.isAfter(to));
-                        return afterFrom && beforeTo;
-                    })
-                    .collect(Collectors.toList());
+        List<DailyLog> logs;
+        if (from != null && to != null) {
+            logs = dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(userId, from, to);
+        } else if (from != null) {
+            logs = dailyLogRepository.findByUserIdAndLogDateGreaterThanEqualOrderByLogDateDesc(userId, from);
+        } else if (to != null) {
+            logs = dailyLogRepository.findByUserIdAndLogDateLessThanEqualOrderByLogDateDesc(userId, to);
+        } else {
+            logs = dailyLogRepository.findByUserIdOrderByLogDateDesc(userId);
         }
         attachSymptoms(logs);
         return logs;
@@ -107,6 +106,7 @@ public class DailyLogService {
     }
 
     @CacheEvict(value = "ai_context", key = "#userId")
+    @Transactional
     public DailyLog upsertLog(String userId, LocalDate logDate, UpsertDailyLogRequest req) {
         validateLogDate(logDate);
         DailyLog log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate)
@@ -222,12 +222,17 @@ public class DailyLogService {
     }
 
     @CacheEvict(value = "ai_context", key = "#userId")
+    @Transactional
     public void deleteLog(String userId, LocalDate logDate) {
         DailyLog log = dailyLogRepository.findByUserIdAndLogDate(userId, logDate)
                 .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy nhật ký ngày này"));
+        boolean affectedPeriod = log.getFlowIntensity() != null
+                && !FlowIntensity.NONE.equals(log.getFlowIntensity());
         dailyLogSymptomRepository.deleteByDailyLogId(log.getId());
         dailyLogRepository.delete(log);
-        cycleRecordService.reconcilePeriodAfterLogDeletion(userId, logDate);
+        if (affectedPeriod) {
+            cycleRecordService.reconcilePeriodAfterLogDeletion(userId, logDate);
+        }
     }
 
     @CacheEvict(value = "ai_context", key = "#userId")

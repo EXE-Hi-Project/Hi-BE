@@ -113,9 +113,12 @@ public class HealthDataMigrationRunner implements ApplicationRunner {
                     record.setId(sequenceService.next("cycle_records"));
                     record.setUserId(user.getId());
                     record.setStartDate(startDate);
-                    record.setEndDate(endDate);
+                    record.setEndDate(endDate != null ? endDate : startDate);
                     record.setCycleLength(valueOrDefault(user.getDefaultCycleLength(), 28));
-                    record.setPeriodLength(valueOrDefault(user.getDefaultPeriodLength(), 5));
+                    record.setPeriodLength(endDate != null ? valueOrDefault(user.getDefaultPeriodLength(), 5) : 1);
+                    record.setLastBleedingDate(record.getEndDate());
+                    record.setStatus(com.hi.api.model.CycleRecordStatus.COMPLETED);
+                    record.setEndDateEstimated(endDate == null);
                     record.setIsIgnored(false);
                     cycleRecordRepository.save(record);
                 }
@@ -149,9 +152,19 @@ public class HealthDataMigrationRunner implements ApplicationRunner {
                     record.setId(sequenceService.next("cycle_records"));
                     record.setUserId(userId);
                     record.setStartDate(startDate);
-                    record.setEndDate(endDate);
+                    LocalDate normalizedEnd = endDate != null
+                            ? endDate
+                            : startDate.plusDays(periodLength - 1L);
+                    if (normalizedEnd.isAfter(LocalDate.now())) {
+                        normalizedEnd = LocalDate.now();
+                    }
+                    record.setEndDate(normalizedEnd);
                     record.setCycleLength(cycleLength);
-                    record.setPeriodLength(periodLength);
+                    record.setPeriodLength((int) java.time.temporal.ChronoUnit.DAYS
+                            .between(startDate, normalizedEnd) + 1);
+                    record.setLastBleedingDate(normalizedEnd);
+                    record.setStatus(com.hi.api.model.CycleRecordStatus.COMPLETED);
+                    record.setEndDateEstimated(endDate == null);
                     record.setIsIgnored(false);
                     cycleRecordRepository.save(record);
                 }
@@ -248,11 +261,11 @@ public class HealthDataMigrationRunner implements ApplicationRunner {
         if (endDate != null && endDate.isBefore(startDate)) {
             throw new IllegalArgumentException("endDate before startDate");
         }
-        if (cycleLength == null || cycleLength < 10 || cycleLength > 90) {
-            throw new IllegalArgumentException("cycleLength outside 10-90");
+        if (cycleLength == null || cycleLength < 1 || cycleLength > 730) {
+            throw new IllegalArgumentException("cycleLength outside 1-730");
         }
-        if (periodLength == null || periodLength < 1 || periodLength > 30) {
-            throw new IllegalArgumentException("periodLength outside 1-30");
+        if (periodLength == null || periodLength < 1) {
+            throw new IllegalArgumentException("periodLength must be positive");
         }
     }
 

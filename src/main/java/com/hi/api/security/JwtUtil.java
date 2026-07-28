@@ -50,8 +50,13 @@ public class JwtUtil {
     }
 
     public String generateToken(String userId) {
+        return generateToken(userId, 0);
+    }
+
+    public String generateToken(String userId, int authVersion) {
         return Jwts.builder()
                 .setSubject(userId)
+                .claim("authVersion", authVersion)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
                 .signWith(key(), SignatureAlgorithm.HS256)
@@ -65,6 +70,16 @@ public class JwtUtil {
                 .parseClaimsJws(token)
                 .getBody()
                 .getSubject();
+    }
+
+    public int getAuthVersionFromToken(String token) {
+        Object value = Jwts.parserBuilder()
+                .setSigningKey(key())
+                .build()
+                .parseClaimsJws(token)
+                .getBody()
+                .get("authVersion");
+        return value instanceof Number number ? number.intValue() : 0;
     }
 
     public boolean validateToken(String token) {

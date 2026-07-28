@@ -319,7 +319,17 @@ public class AuthService {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("User khong hop le");
         }
-        return jwtUtil.generateToken(userId);
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User khong ton tai"));
+        int authVersion = user.getAuthVersion() != null ? user.getAuthVersion() : 0;
+        return jwtUtil.generateToken(userId, authVersion);
+    }
+
+    public void revokeSessions(User user) {
+        if (user == null || user.getId() == null) return;
+        int currentVersion = user.getAuthVersion() != null ? user.getAuthVersion() : 0;
+        user.setAuthVersion(currentVersion + 1);
+        userRepository.save(user);
     }
 
     private Map<String, Object> sanitizeUser(User user) {
@@ -396,6 +406,7 @@ public class AuthService {
         User user = userRepository.findById(resetToken.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
         user.setPassword(passwordEncoder.encode(req.getNewPassword()));
+        user.setAuthVersion((user.getAuthVersion() != null ? user.getAuthVersion() : 0) + 1);
         userRepository.save(user);
         resetToken.setUsedAt(Instant.now());
         tokenRepository.save(resetToken);

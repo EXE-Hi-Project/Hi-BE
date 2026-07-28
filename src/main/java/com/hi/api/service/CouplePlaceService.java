@@ -42,6 +42,7 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -90,6 +91,8 @@ public class CouplePlaceService {
     private final PartnerAccessService partnerAccessService;
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
+    private final RateLimitService rateLimitService;
+    private final PendingMediaUploadService pendingMediaUploadService;
 
     @Value("${app.osm.overpass-url:https://overpass-api.de/api/interpreter}")
     private String overpassUrl;
@@ -138,9 +141,11 @@ public class CouplePlaceService {
                               GooglePlaceCacheRepository googleCacheRepository,
                               SequenceService sequenceService,
                               RestTemplate restTemplate,
-                              PartnerAccessService partnerAccessService,
-                              S3Client s3Client,
-                              S3Presigner s3Presigner) {
+                               PartnerAccessService partnerAccessService,
+                               S3Client s3Client,
+                               S3Presigner s3Presigner,
+                               RateLimitService rateLimitService,
+                               PendingMediaUploadService pendingMediaUploadService) {
         this.placeRepository = placeRepository;
         this.reviewRepository = reviewRepository;
         this.reactionRepository = reactionRepository;
@@ -152,6 +157,8 @@ public class CouplePlaceService {
         this.partnerAccessService = partnerAccessService;
         this.s3Client = s3Client;
         this.s3Presigner = s3Presigner;
+        this.rateLimitService = rateLimitService;
+        this.pendingMediaUploadService = pendingMediaUploadService;
     }
 
     public List<CouplePlace> nearby(User user, Double lat, Double lng, Integer radius, CouplePlaceCategory category, String sort) {
@@ -875,6 +882,13 @@ public class CouplePlaceService {
     public Map<String, Object> presignPhoto(User user, Long placeId, PresignCouplePlacePhotoRequest request) {
         getAccessiblePlace(user, placeId);
         ensurePhotoUploadEnabled();
+        rateLimitService.check(
+                "upload:couple-place:presign",
+                user.getId(),
+                30,
+                Duration.ofHours(1),
+                "Bạn đã tạo quá nhiều yêu cầu tải ảnh. Vui lòng thử lại sau."
+        );
         if (photoRepository.countByPlaceIdAndStatus(placeId, CouplePlaceStatus.PUBLISHED) >= MAX_PHOTOS_PER_PLACE) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Địa điểm đã có tối đa 5 ảnh");
         }
@@ -890,13 +904,16 @@ public class CouplePlaceService {
                 .bucket(mediaBucket)
                 .key(objectKey)
                 .contentType(contentType)
+                .contentLength(request.getContentLength())
                 .build();
         PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
                 .signatureDuration(PHOTO_PRESIGN_TTL)
                 .putObjectRequest(putObjectRequest)
                 .build();
+        String uploadUrl = s3Presigner.presignPutObject(presignRequest).url().toString();
+        pendingMediaUploadService.register(user.getId(), mediaBucket, objectKey);
         return Map.of(
-                "uploadUrl", s3Presigner.presignPutObject(presignRequest).url().toString(),
+                "uploadUrl", uploadUrl,
                 "objectKey", objectKey,
                 "publicUrl", photoPublicUrl(objectKey),
                 "contentType", contentType,
@@ -925,7 +942,9 @@ public class CouplePlaceService {
         photo.setUrl(photoPublicUrl(objectKey));
         photo.setContentType(contentType);
         photo.setStatus(CouplePlaceStatus.PUBLISHED);
-        return photoRepository.save(photo);
+        CouplePlacePhoto saved = photoRepository.save(photo);
+        pendingMediaUploadService.confirm(mediaBucket, objectKey);
+        return saved;
     }
 
     private void ensurePhotoUploadEnabled() {
@@ -945,11 +964,26 @@ public class CouplePlaceService {
                     .build());
             String contentType = normalizePhotoContentType(head.contentType());
             validatePhotoLength(head.contentLength());
+            S3ImageContentValidator.verify(s3Client, mediaBucket, objectKey, contentType);
             return contentType;
+        } catch (IllegalArgumentException ex) {
+            deleteInvalidPhotoObject(objectKey);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
         } catch (NoSuchKeyException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chưa tìm thấy ảnh đã tải lên");
         } catch (S3Exception ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Không thể xác thực ảnh đã tải lên");
+        }
+    }
+
+    private void deleteInvalidPhotoObject(String objectKey) {
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(mediaBucket)
+                    .key(objectKey)
+                    .build());
+        } catch (S3Exception ignored) {
+            // Cleanup is best-effort; the bucket lifecycle policy remains the final safety net.
         }
     }
 

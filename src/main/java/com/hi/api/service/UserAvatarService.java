@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -33,6 +34,8 @@ public class UserAvatarService {
     private final UserRepository userRepository;
     private final S3Client s3Client;
     private final S3Presigner s3Presigner;
+    private final RateLimitService rateLimitService;
+    private final PendingMediaUploadService pendingMediaUploadService;
 
     @Value("${app.s3.user-media-bucket:}")
     private String bucket;
@@ -43,14 +46,27 @@ public class UserAvatarService {
     @Value("${app.s3.region:${aws.region:us-east-1}}")
     private String s3Region;
 
-    public UserAvatarService(UserRepository userRepository, S3Client s3Client, S3Presigner s3Presigner) {
+    public UserAvatarService(UserRepository userRepository,
+                             S3Client s3Client,
+                             S3Presigner s3Presigner,
+                             RateLimitService rateLimitService,
+                             PendingMediaUploadService pendingMediaUploadService) {
         this.userRepository = userRepository;
         this.s3Client = s3Client;
         this.s3Presigner = s3Presigner;
+        this.rateLimitService = rateLimitService;
+        this.pendingMediaUploadService = pendingMediaUploadService;
     }
 
     public Map<String, Object> presignAvatar(User user, PresignAvatarUploadRequest request) {
         ensureConfigured();
+        rateLimitService.check(
+                "upload:avatar:presign",
+                user.getId(),
+                20,
+                Duration.ofHours(1),
+                "Ban da tao qua nhieu yeu cau tai avatar. Vui long thu lai sau."
+        );
         String contentType = normalizeContentType(request.getContentType());
         validateContentLength(request.getContentLength());
 
@@ -63,6 +79,7 @@ public class UserAvatarService {
                 .bucket(bucket)
                 .key(objectKey)
                 .contentType(contentType)
+                .contentLength(request.getContentLength())
                 .build();
         PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
                 .signatureDuration(PRESIGN_TTL)
@@ -72,6 +89,7 @@ public class UserAvatarService {
         String publicUrl = publicUrlFor(objectKey);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("uploadUrl", s3Presigner.presignPutObject(presignRequest).url().toString());
+        pendingMediaUploadService.register(user.getId(), bucket, objectKey);
         data.put("objectKey", objectKey);
         data.put("publicUrl", publicUrl);
         data.put("contentType", contentType);
@@ -90,8 +108,12 @@ public class UserAvatarService {
         verifyUploadedObject(objectKey);
         User persisted = userRepository.findById(user.getId())
                 .orElseThrow(() -> new IllegalArgumentException("Nguoi dung khong ton tai"));
+        String previousAvatar = persisted.getAvatar();
         persisted.setAvatar(publicUrlFor(objectKey));
-        return userRepository.save(persisted);
+        User saved = userRepository.save(persisted);
+        pendingMediaUploadService.confirm(bucket, objectKey);
+        deletePreviousManagedAvatar(previousAvatar, user.getId(), objectKey);
+        return saved;
     }
 
     private void verifyUploadedObject(String objectKey) {
@@ -100,12 +122,44 @@ public class UserAvatarService {
                     .bucket(bucket)
                     .key(objectKey)
                     .build());
-            normalizeContentType(head.contentType());
+            String contentType = normalizeContentType(head.contentType());
             validateContentLength(head.contentLength());
+            S3ImageContentValidator.verify(s3Client, bucket, objectKey, contentType);
+        } catch (IllegalArgumentException ex) {
+            deleteInvalidObject(objectKey);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
         } catch (NoSuchKeyException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chua tim thay file avatar tren S3");
         } catch (S3Exception ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Khong the xac thuc file avatar tren S3");
+        }
+    }
+
+    private void deleteInvalidObject(String objectKey) {
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(objectKey)
+                    .build());
+        } catch (S3Exception ignored) {
+            // Cleanup is best-effort; the bucket lifecycle policy remains the final safety net.
+        }
+    }
+
+    private void deletePreviousManagedAvatar(String previousUrl, String userId, String currentObjectKey) {
+        if (previousUrl == null || previousUrl.isBlank()) return;
+        String prefix = "users/" + userId + "/avatar/";
+        int keyStart = previousUrl.indexOf(prefix);
+        if (keyStart < 0) return;
+        String previousObjectKey = previousUrl.substring(keyStart).split("\\?", 2)[0];
+        if (previousObjectKey.equals(currentObjectKey)) return;
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(previousObjectKey)
+                    .build());
+        } catch (S3Exception ignored) {
+            // Best effort; a failed cleanup must not roll back the new avatar.
         }
     }
 

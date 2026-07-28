@@ -36,6 +36,12 @@ public class CycleRecordInsightResponse {
     LocalDate estimatedPeriodEndDate;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate predictedStartEarliest;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate predictedStartLatest;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
     LocalDate estimatedNextStartDate;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
@@ -62,6 +68,11 @@ public class CycleRecordInsightResponse {
     Integer estimatedPeriodDay;
     String fertilityStatus;
     String predictionConfidence;
+    String predictionBasis;
+    List<String> dataQualityIssues;
+    Integer cycleCompleteness;
+    boolean fertilityEstimateAvailable;
+    String algorithmVersion;
     String regularityStatus;
     Integer regularityScore;
     String regularityLabel;

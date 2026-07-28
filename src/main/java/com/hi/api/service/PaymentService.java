@@ -7,6 +7,7 @@ import com.hi.api.repository.TransactionRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import vn.payos.PayOS;
 import vn.payos.model.v2.paymentRequests.CreatePaymentLinkRequest;
@@ -62,15 +63,16 @@ public class PaymentService {
                 throw new IllegalArgumentException("Bạn đang sử dụng Hi Pro hoặc Hi Max. Không thể tạo phiên thanh toán mới.");
             }
         }
+        if (user.getSubscription() != null && "pending".equalsIgnoreCase(user.getSubscription().getStatus())) {
+            throw new IllegalArgumentException("Bạn đã có một phiên thanh toán đang chờ. Vui lòng hoàn tất hoặc hủy phiên hiện tại.");
+        }
 
         PlanPricingService.ResolvedPlan resolved = planPricingService.resolvePlan(priceId);
         PlanPricingService.PlanPrice selectedPlan = resolved.plan();
         long amount = selectedPlan.currentPrice();
         String planName = selectedPlan.code();
 
-        // PayOS orderCode must be a Long integer.
-        // We combine the current epoch seconds with a random 4-digit code.
-        long orderCode = (System.currentTimeMillis() / 1000) * 10000 + (long) (Math.random() * 10000);
+        long orderCode = nextOrderCode();
 
         if (amount == 0) {
             ensureSubscription(user);
@@ -86,6 +88,13 @@ public class PaymentService {
 
         String baseUrl = resolveReturnBaseUrl(originUrl);
 
+        Transaction transaction = newTransaction(user, selectedPlan, resolved.campaignId(), orderCode, "pending");
+        try {
+            transactionRepository.save(transaction);
+        } catch (DuplicateKeyException exception) {
+            throw new IllegalArgumentException("Bạn đã có một phiên thanh toán đang chờ. Vui lòng hoàn tất hoặc hủy phiên hiện tại.");
+        }
+
         CreatePaymentLinkRequest request = CreatePaymentLinkRequest.builder()
                 .orderCode(orderCode)
                 .amount(amount)
@@ -94,7 +103,16 @@ public class PaymentService {
                 .cancelUrl(baseUrl + "/payment/cancel")
                 .build();
 
-        CreatePaymentLinkResponse response = payOS.paymentRequests().create(request);
+        CreatePaymentLinkResponse response;
+        try {
+            response = payOS.paymentRequests().create(request);
+        } catch (Exception exception) {
+            transaction.setStatus("failed");
+            transactionRepository.save(transaction);
+            throw exception;
+        }
+        transaction.setCheckoutUrl(response.getCheckoutUrl());
+        transactionRepository.save(transaction);
 
         // Update user state with the pending transaction code
         ensureSubscription(user);
@@ -103,10 +121,6 @@ public class PaymentService {
         user.getSubscription().setStatus("pending");
         user.getSubscription().setCancelAtPeriodEnd(false);
         userRepository.save(user);
-
-        // Create transaction log in history
-        Transaction transaction = newTransaction(user, selectedPlan, resolved.campaignId(), orderCode, "pending");
-        transactionRepository.save(transaction);
 
         log.info("Created PayOS payment link for user: {}, orderCode: {}, url: {}", user.getEmail(), orderCode, response.getCheckoutUrl());
         return CheckoutSessionResult.checkout(response.getCheckoutUrl());
@@ -146,28 +160,31 @@ public class PaymentService {
                 return;
             }
 
-            Optional<User> userOpt = userRepository.findByPayosOrderCode(orderCode);
-            if (userOpt.isPresent()) {
-                User user = userOpt.get();
-                Transaction transaction = transactionRepository.findByOrderCode(orderCode)
-                        .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy giao dịch chờ xử lý"));
-                long paidAmount = transaction.getPaidAmount() != null ? transaction.getPaidAmount() : transaction.getAmount();
-                if (paidAmount != data.getAmount()) {
-                    throw new IllegalArgumentException("Số tiền webhook không khớp giao dịch");
-                }
-                if ("completed".equalsIgnoreCase(transaction.getStatus())) {
-                    return;
-                }
-                if (!"pending".equalsIgnoreCase(transaction.getStatus())) {
-                    throw new IllegalArgumentException("Giao dịch không còn ở trạng thái chờ");
-                }
-
-                Instant currentPeriodEnd = activateSubscription(user, transaction, data.getAmount(), "payment.completed");
-                log.info("Successfully upgraded user {} to paid Hi plan. Expiration: {}", user.getEmail(), currentPeriodEnd);
-            } else {
-                log.warn("User not found for PayOS orderCode: {}", orderCode);
-            }
+            handleSubscriptionPayment(orderCode, data.getAmount());
         }
+    }
+
+    void handleSubscriptionPayment(Long orderCode, long amount) {
+        Transaction transaction = transactionRepository.findByOrderCode(orderCode)
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy giao dịch chờ xử lý"));
+        long paidAmount = transaction.getPaidAmount() != null ? transaction.getPaidAmount() : transaction.getAmount();
+        if (paidAmount != amount) {
+            throw new IllegalArgumentException("Số tiền webhook không khớp giao dịch");
+        }
+        if ("completed".equalsIgnoreCase(transaction.getStatus())) {
+            return;
+        }
+        if (!"pending".equalsIgnoreCase(transaction.getStatus())) {
+            throw new IllegalArgumentException("Giao dịch không còn ở trạng thái chờ");
+        }
+
+        User user = userRepository.findById(transaction.getUserId())
+                .orElseThrow(() -> new IllegalArgumentException("Không tìm thấy người dùng của giao dịch"));
+        ensureSubscription(user);
+        user.getSubscription().setPayosOrderCode(orderCode);
+        user.getSubscription().setPlan(transaction.getPlan());
+        Instant currentPeriodEnd = activateSubscription(user, transaction, amount, "payment.completed");
+        log.info("Successfully upgraded user {} to paid Hi plan. Expiration: {}", user.getEmail(), currentPeriodEnd);
     }
 
     public void cancelSubscription(User user) {
@@ -220,6 +237,7 @@ public class PaymentService {
         Transaction transaction = new Transaction();
         transaction.setUserId(user.getId());
         transaction.setUserEmail(user.getEmail());
+        transaction.setType("SUBSCRIPTION");
         transaction.setOrderCode(orderCode);
         transaction.setAmount(selectedPlan.currentPrice());
         transaction.setBaseAmount(selectedPlan.basePrice());
@@ -230,6 +248,17 @@ public class PaymentService {
         transaction.setStatus(status);
         transaction.setDescription(selectedPlan.name());
         return transaction;
+    }
+
+    private long nextOrderCode() {
+        for (int attempt = 0; attempt < 8; attempt++) {
+            long orderCode = (System.currentTimeMillis() / 1000) * 10000 + (long) (Math.random() * 10000);
+            if (transactionRepository.findByOrderCode(orderCode).isEmpty()
+                    && !voucherOrderService.orderCodeExists(orderCode)) {
+                return orderCode;
+            }
+        }
+        throw new IllegalStateException("Không tạo được mã thanh toán duy nhất");
     }
 
     private Instant activateSubscription(User user, Transaction transaction, long amount, String eventType) {

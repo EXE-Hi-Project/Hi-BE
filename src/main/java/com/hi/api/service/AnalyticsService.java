@@ -24,7 +24,6 @@ public class AnalyticsService {
 
     private static final int MAX_EVENTS_PER_MINUTE = 120;
     private static final int MAX_METADATA_KEYS = 12;
-    private static final int MAX_METADATA_VALUE_LENGTH = 200;
     private static final Set<String> ALLOWED_EVENT_TYPES = Set.of(
             "PAGE_VIEW", "CLICK", "REGISTER", "ONBOARDING_COMPLETE", "LOGIN", "CTA_CLICK", "FORM_SUBMIT"
     );
@@ -58,7 +57,7 @@ public class AnalyticsService {
         event.setUserId(authenticatedUser != null ? authenticatedUser.getId() : null);
         event.setEventType(safeEventType(req.getEventType()));
         event.setTarget(trim(req.getTarget(), 160));
-        event.setElementText(trim(req.getElementText(), 120));
+        event.setElementText(null);
         event.setMetadata(safeMetadata(req.getMetadata()));
         event.setCreatedAt(Instant.now());
         return analyticsEventRepository.save(event);
@@ -103,16 +102,13 @@ public class AnalyticsService {
         if (input == null || input.isEmpty()) return null;
         Map<String, Object> safe = new LinkedHashMap<>();
         input.entrySet().stream()
+                .filter(entry -> entry.getValue() instanceof Number || entry.getValue() instanceof Boolean)
                 .limit(MAX_METADATA_KEYS)
                 .forEach(entry -> {
                     String key = trim(entry.getKey(), 60);
                     if (key == null || key.isBlank()) return;
                     Object value = entry.getValue();
-                    if (value instanceof Number || value instanceof Boolean) {
-                        safe.put(key, value);
-                    } else if (value != null) {
-                        safe.put(key, trim(String.valueOf(value), MAX_METADATA_VALUE_LENGTH));
-                    }
+                    safe.put(key, value);
                 });
         return safe.isEmpty() ? null : safe;
     }

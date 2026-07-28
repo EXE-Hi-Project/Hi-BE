@@ -18,7 +18,8 @@ import java.time.Instant;
 @Document(collection = "voucher_orders")
 @CompoundIndexes({
         @CompoundIndex(name = "voucher_order_user_created_idx", def = "{ 'userId': 1, 'createdAt': -1 }"),
-        @CompoundIndex(name = "voucher_order_status_created_idx", def = "{ 'status': 1, 'createdAt': 1 }")
+        @CompoundIndex(name = "voucher_order_status_created_idx", def = "{ 'status': 1, 'createdAt': 1 }"),
+        @CompoundIndex(name = "voucher_order_status_issuing_started_idx", def = "{ 'status': 1, 'issuingStartedAt': 1 }")
 })
 public class VoucherOrder {
 
@@ -69,6 +70,8 @@ public class VoucherOrder {
     private String failureReason;
 
     private Instant paidAt;
+
+    private Instant issuingStartedAt;
 
     private Instant issuedAt;
 

@@ -16,6 +16,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.time.Clock;
 import java.util.List;
 import java.util.Optional;
 
@@ -34,6 +35,7 @@ class CycleRecordServiceTest {
     private CycleRecordRepository cycleRecordRepository;
     private DailyLogRepository dailyLogRepository;
     private UserRepository userRepository;
+    private SequenceService sequenceService;
     private CycleRecordService service;
 
     @BeforeEach
@@ -43,7 +45,7 @@ class CycleRecordServiceTest {
         DailyLogSymptomRepository dailyLogSymptomRepository = mock(DailyLogSymptomRepository.class);
         SymptomDictionaryRepository symptomDictionaryRepository = mock(SymptomDictionaryRepository.class);
         userRepository = mock(UserRepository.class);
-        SequenceService sequenceService = mock(SequenceService.class);
+        sequenceService = mock(SequenceService.class);
         service = new CycleRecordService(
                 cycleRecordRepository,
                 dailyLogRepository,
@@ -51,12 +53,13 @@ class CycleRecordServiceTest {
                 symptomDictionaryRepository,
                 userRepository,
                 sequenceService,
-                mock(RealtimeEventService.class)
+                mock(RealtimeEventService.class),
+                Clock.systemDefaultZone()
         );
     }
 
     @Test
-    void getInsightsShowsDelayAsSoonAsEstimatedPeriodStartsWithoutCreatingCycle() {
+    void getInsightsKeepsDateInsideUncertaintyWindowAsPredicted() {
         String userId = "female-1";
         CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(29), 28, 5);
         User user = new User();
@@ -72,11 +75,11 @@ class CycleRecordServiceTest {
 
         CycleRecordInsightResponse insights = service.getInsights(userId);
 
-        assertEquals("DELAYED", insights.getPeriodStatus());
+        assertEquals("PREDICTED", insights.getPeriodStatus());
         assertEquals(LocalDate.now().minusDays(1), insights.getEstimatedPeriodStartDate());
         assertEquals(null, insights.getEstimatedCycleDay());
-        assertEquals(null, insights.getEstimatedPeriodDay());
-        assertEquals(1, insights.getPeriodDelayDays());
+        assertEquals(9, insights.getEstimatedPeriodDay());
+        assertEquals(0, insights.getPeriodDelayDays());
         assertEquals(null, insights.getDaysUntilEstimatedPeriod());
         assertEquals(null, insights.getConfirmedPeriodDay());
         assertEquals("LOW", insights.getPredictionConfidence());
@@ -103,7 +106,7 @@ class CycleRecordServiceTest {
 
         assertEquals("DELAYED", insights.getPeriodStatus());
         assertEquals(LocalDate.now().minusDays(12), insights.getEstimatedPeriodStartDate());
-        assertEquals(12, insights.getPeriodDelayDays());
+        assertEquals(5, insights.getPeriodDelayDays());
         assertEquals(null, insights.getDaysUntilEstimatedPeriod());
         assertEquals(null, insights.getEstimatedPeriodDay());
         assertEquals(null, insights.getConfirmedPeriodDay());
@@ -113,7 +116,7 @@ class CycleRecordServiceTest {
     @Test
     void getInsightsReturnsCountdownBeforeEstimatedPeriod() {
         String userId = "female-upcoming";
-        CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(25), 28, 5);
+        CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(15), 28, 5);
         User user = new User();
         user.setId(userId);
         user.setDefaultCycleLength(28);
@@ -128,13 +131,14 @@ class CycleRecordServiceTest {
         CycleRecordInsightResponse insights = service.getInsights(userId);
 
         assertEquals("UPCOMING", insights.getPeriodStatus());
-        assertEquals(3, insights.getDaysUntilEstimatedPeriod());
+        assertEquals(6, insights.getDaysUntilEstimatedPeriod());
         assertEquals(null, insights.getEstimatedPeriodDay());
-        assertEquals("LOW", insights.getFertilityStatus());
+        assertEquals("UNKNOWN", insights.getFertilityStatus());
+        assertFalse(insights.isFertilityEstimateAvailable());
     }
 
     @Test
-    void getInsightsMarksHighFertilityInsideEstimatedWindow() {
+    void getInsightsDoesNotEstimateFertilityFromOneCycle() {
         String userId = "female-fertile";
         CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(13), 28, 5);
         User user = new User();
@@ -150,14 +154,51 @@ class CycleRecordServiceTest {
 
         CycleRecordInsightResponse insights = service.getInsights(userId);
 
-        assertEquals("HIGH", insights.getFertilityStatus());
+        assertEquals("UNKNOWN", insights.getFertilityStatus());
+        assertEquals(null, insights.getEstimatedOvulationDate());
+        assertFalse(insights.isFertilityEstimateAvailable());
+    }
+
+    @Test
+    void getInsightsEstimatesFertilityOnlyWithStableHistory() {
+        String userId = "female-fertile-stable";
+        LocalDate latestStart = LocalDate.now().minusDays(13);
+        List<CycleRecord> records = new java.util.ArrayList<>();
+        for (int index = 0; index < 7; index++) {
+            CycleRecord record = cycleRecord(userId, latestStart.minusDays(index * 28L), 28, 5);
+            record.setId((long) index + 1);
+            record.setEndDate(record.getStartDate().plusDays(4));
+            record.setLastBleedingDate(record.getEndDate());
+            record.setStatus(CycleRecordStatus.COMPLETED);
+            record.setEndDateEstimated(false);
+            records.add(record);
+        }
+        User user = new User();
+        user.setId(userId);
+        user.setDefaultCycleLength(28);
+        user.setDefaultPeriodLength(5);
+
+        when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
+                .thenReturn(records);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of());
+
+        CycleRecordInsightResponse insights = service.getInsights(userId);
+
+        assertEquals("ESTIMATED_WINDOW", insights.getFertilityStatus());
+        assertEquals("HIGH", insights.getPredictionConfidence());
         assertEquals(LocalDate.now().plusDays(1), insights.getEstimatedOvulationDate());
+        assertTrue(insights.isFertilityEstimateAvailable());
     }
 
     @Test
     void getInsightsReturnsConfirmedPeriodDayWithoutPredictionCounters() {
         String userId = "female-confirmed";
         CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(1), 28, 5);
+        record.setEndDate(LocalDate.now());
+        record.setLastBleedingDate(LocalDate.now());
+        record.setStatus(CycleRecordStatus.COMPLETED);
         User user = new User();
         user.setId(userId);
         user.setDefaultCycleLength(28);
@@ -280,6 +321,33 @@ class CycleRecordServiceTest {
     }
 
     @Test
+    void dailyFlowOnDaySixReopensLegacyFiveDayRecordInsteadOfStartingAnotherCycle() {
+        String userId = "female-legacy-day-six";
+        LocalDate startDate = LocalDate.now().minusDays(5);
+        CycleRecord completed = cycleRecord(userId, startDate, 28, 5);
+        completed.setStatus(CycleRecordStatus.COMPLETED);
+        completed.setEndDate(startDate.plusDays(4));
+        completed.setLastBleedingDate(completed.getEndDate());
+
+        when(cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId))
+                .thenReturn(List.of(completed));
+        when(cycleRecordRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CycleRecord result = service.syncPeriodFromDailyLog(
+                userId,
+                LocalDate.now(),
+                FlowIntensity.LIGHT,
+                false,
+                false
+        );
+
+        assertEquals(CycleRecordStatus.ONGOING, result.getStatus());
+        assertEquals(LocalDate.now(), result.getLastBleedingDate());
+        assertEquals(6, result.getPeriodLength());
+        assertEquals(null, result.getEndDate());
+    }
+
+    @Test
     void endingWithoutFlowUsesLastRecordedBleedingDay() {
         String userId = "female-finish";
         LocalDate startDate = LocalDate.now().minusDays(6);
@@ -323,6 +391,7 @@ class CycleRecordServiceTest {
 
         when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
                 .thenReturn(List.of(active));
+        when(cycleRecordRepository.save(active)).thenReturn(active);
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
                 .thenReturn(List.of());
@@ -333,6 +402,119 @@ class CycleRecordServiceTest {
         assertTrue(insights.isPeriodOngoing());
         assertEquals(6, insights.getConfirmedPeriodDay());
         assertEquals(null, insights.getAveragePeriodLength());
+    }
+
+    @Test
+    void staleOngoingPeriodRequiresConfirmationButRemainsEditable() {
+        String userId = "female-stale";
+        CycleRecord active = cycleRecord(userId, LocalDate.now().minusDays(10), 28, 8);
+        active.setStatus(CycleRecordStatus.ONGOING);
+        active.setLastBleedingDate(LocalDate.now().minusDays(3));
+        User user = new User();
+        user.setId(userId);
+
+        when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
+                .thenReturn(List.of(active));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of());
+
+        CycleRecordInsightResponse insights = service.getInsights(userId);
+
+        assertEquals("NEEDS_CONFIRMATION", insights.getPeriodStatus());
+        assertEquals(CycleRecordStatus.NEEDS_CONFIRMATION, active.getStatus());
+        assertTrue(insights.isPeriodOngoing());
+        assertTrue(insights.getDataQualityIssues().stream().anyMatch(issue -> issue.contains("xác nhận")));
+        verify(cycleRecordRepository).save(active);
+    }
+
+    @Test
+    void scheduledMaintenanceMarksStaleOngoingPeriodsForConfirmation() {
+        String userId = "female-scheduled-stale";
+        CycleRecord active = cycleRecord(userId, LocalDate.now().minusDays(8), 28, 5);
+        active.setStatus(CycleRecordStatus.ONGOING);
+        active.setLastBleedingDate(LocalDate.now().minusDays(3));
+
+        when(cycleRecordRepository.findByStatus(CycleRecordStatus.ONGOING)).thenReturn(List.of(active));
+        when(cycleRecordRepository.save(active)).thenReturn(active);
+
+        service.markStalePeriodsForConfirmation();
+
+        assertEquals(CycleRecordStatus.NEEDS_CONFIRMATION, active.getStatus());
+        verify(cycleRecordRepository).save(active);
+    }
+
+    @Test
+    void continuousBleedingBeyondThirtyDaysIsRecordedAndWarnedInsteadOfRejected() {
+        String userId = "female-long-bleeding";
+        LocalDate startDate = LocalDate.now().minusDays(30);
+        CycleRecord active = cycleRecord(userId, startDate, 28, 30);
+        active.setStatus(CycleRecordStatus.ONGOING);
+        active.setLastBleedingDate(LocalDate.now().minusDays(1));
+
+        when(cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId)).thenReturn(List.of(active));
+        when(cycleRecordRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        CycleRecord result = service.syncPeriodFromDailyLog(
+                userId, LocalDate.now(), FlowIntensity.HEAVY, false, false);
+
+        assertEquals(31, result.getPeriodLength());
+        assertEquals(LocalDate.now(), result.getLastBleedingDate());
+        assertEquals(CycleRecordStatus.ONGOING, result.getStatus());
+    }
+
+    @Test
+    void confirmingNewStartClosesForgottenActivePeriodAtLastBleedingDay() {
+        String userId = "female-new-after-stale";
+        LocalDate today = LocalDate.now();
+        CycleRecord old = cycleRecord(userId, today.minusDays(35), 28, 6);
+        old.setStatus(CycleRecordStatus.NEEDS_CONFIRMATION);
+        old.setLastBleedingDate(today.minusDays(30));
+        User user = new User();
+        user.setId(userId);
+        user.setDefaultCycleLength(28);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(cycleRecordRepository.findByUserIdAndStartDate(userId, today)).thenReturn(Optional.empty());
+        when(cycleRecordRepository.findByUserIdOrderByStartDateDesc(userId)).thenReturn(List.of(old));
+        when(cycleRecordRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(sequenceService.next("cycle_records")).thenReturn(99L);
+
+        CycleRecord created = service.confirmPeriodStart(userId, today);
+
+        assertEquals(CycleRecordStatus.COMPLETED, old.getStatus());
+        assertEquals(today.minusDays(30), old.getEndDate());
+        assertEquals(CycleRecordStatus.ONGOING, created.getStatus());
+        assertEquals(today, created.getStartDate());
+    }
+
+    @Test
+    void irregularContextSuppressesCalendarFertilityEstimate() {
+        String userId = "female-irregular-context";
+        LocalDate latestStart = LocalDate.now().minusDays(13);
+        List<CycleRecord> records = new java.util.ArrayList<>();
+        for (int index = 0; index < 7; index++) {
+            CycleRecord record = cycleRecord(userId, latestStart.minusDays(index * 28L), 28, 5);
+            record.setId((long) index + 1);
+            record.setEndDate(record.getStartDate().plusDays(4));
+            record.setStatus(CycleRecordStatus.COMPLETED);
+            records.add(record);
+        }
+        User user = new User();
+        user.setId(userId);
+        user.setIrregularCycle(true);
+
+        when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
+                .thenReturn(records);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of());
+
+        CycleRecordInsightResponse insights = service.getInsights(userId);
+
+        assertFalse(insights.isFertilityEstimateAvailable());
+        assertEquals("UNKNOWN", insights.getFertilityStatus());
+        assertEquals(null, insights.getEstimatedOvulationDate());
     }
 
     private CycleRecord cycleRecord(String userId, LocalDate startDate, int cycleLength, int periodLength) {

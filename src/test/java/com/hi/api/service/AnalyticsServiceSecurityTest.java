@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -41,15 +41,18 @@ class AnalyticsServiceSecurityTest {
         for (int i = 0; i < 20; i++) {
             metadata.put("key-" + i, "x".repeat(500));
         }
+        metadata.put("count", 3);
+        metadata.put("enabled", true);
         request.setMetadata(metadata);
+        request.setElementText("Nội dung sức khỏe riêng tư");
 
         User principal = new User();
         principal.setId("real-user");
         AnalyticsEvent event = service.trackEvent(request, principal, "127.0.0.1");
 
         assertEquals("real-user", event.getUserId());
-        assertEquals(12, event.getMetadata().size());
-        assertFalse(event.getMetadata().values().stream().anyMatch(value -> String.valueOf(value).length() > 200));
+        assertEquals(Map.of("count", 3, "enabled", true), event.getMetadata());
+        assertNull(event.getElementText());
     }
 
     @Test

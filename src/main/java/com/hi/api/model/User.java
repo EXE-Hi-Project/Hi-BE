@@ -32,6 +32,7 @@ public class User {
     private String password;
 
     private String authProvider = "local";
+    private Integer authVersion = 0;
     private String googleId;
     private String facebookId;
 
@@ -39,6 +40,7 @@ public class User {
     private String gender;
     private String avatar = "";
 
+    @Indexed
     private String accountStatus = "ACTIVE";
     private String accountStatusReason;
     private Instant accountStatusUpdatedAt;
@@ -55,8 +57,14 @@ public class User {
     private String lastPeriodDate;
     private String lastPeriodEndDate;
     private Boolean irregularCycle = false;
+    private Boolean pregnant = false;
+    private Boolean postpartum = false;
+    private Boolean breastfeeding = false;
+    private Boolean hormonalContraception = false;
+    private Boolean perimenopause = false;
 
     // Partner
+    @Indexed
     private String partnerId;
 
     @Indexed(unique = true, sparse = true)
