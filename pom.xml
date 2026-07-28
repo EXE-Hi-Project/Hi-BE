@@ -23,7 +23,7 @@
         <java.version>17</java.version>
 
         <jjwt.version>0.11.5</jjwt.version>
-        <aws.sdk.version>2.47.4</aws.sdk.version>
+        <aws.sdk.version>2.49.4</aws.sdk.version>
         <spring-ai.version>1.0.0</spring-ai.version>
         <lombok.version>1.18.46</lombok.version>
     </properties>
