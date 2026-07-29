@@ -540,6 +540,81 @@ public class AdminService {
         return user;
     }
 
+    public User updateUserSubscription(String actorUserId,
+                                       String targetUserId,
+                                       String requestedPlan,
+                                       int durationDays,
+                                       String reason,
+                                       String ipAddress) {
+        String normalizedRequest = requestedPlan == null
+                ? ""
+                : requestedPlan.trim().toLowerCase(Locale.ROOT);
+        String plan = switch (normalizedRequest) {
+            case "free" -> "free";
+            case "premium", "premium_monthly" -> "PREMIUM_MONTHLY";
+            case "premium_yearly" -> "PREMIUM_YEARLY";
+            default -> throw new IllegalArgumentException("Gói tài khoản không hợp lệ");
+        };
+        if (!"free".equals(plan) && (durationDays < 1 || durationDays > 366)) {
+            throw new IllegalArgumentException("Thời hạn gói phải từ 1 đến 366 ngày");
+        }
+
+        User user = userRepository.findById(targetUserId)
+                .orElseThrow(() -> new IllegalArgumentException("Người dùng không tồn tại"));
+        if ("DELETED".equalsIgnoreCase(user.getAccountStatus())) {
+            throw new IllegalArgumentException("Tài khoản đã bị xóa, không thể cập nhật gói");
+        }
+
+        User.SubscriptionInfo subscription = user.getSubscription();
+        if (subscription == null) {
+            subscription = new User.SubscriptionInfo();
+            user.setSubscription(subscription);
+        }
+        String before = describeSubscription(subscription);
+
+        subscription.setPlan(plan);
+        subscription.setPayosOrderCode(null);
+        subscription.setStripeSubscriptionId(null);
+        subscription.setCancelAtPeriodEnd(false);
+        if ("free".equals(plan)) {
+            subscription.setStatus("inactive");
+            subscription.setCurrentPeriodEnd(null);
+        } else {
+            subscription.setStatus("active");
+            subscription.setCurrentPeriodEnd(Instant.now().plus(java.time.Duration.ofDays(durationDays)));
+        }
+        User saved = userRepository.save(user);
+
+        AdminAuditLog log = new AdminAuditLog();
+        log.setActorUserId(actorUserId);
+        log.setTargetUserId(targetUserId);
+        log.setAction("UPDATE_USER_SUBSCRIPTION");
+        log.setEntityType("USER_SUBSCRIPTION");
+        log.setEntityId(targetUserId);
+        log.setBeforeData(before);
+        String safeReason = reason == null ? "" : reason.trim();
+        log.setAfterData(describeSubscription(subscription)
+                + (safeReason.isBlank() ? "" : ", reason=" + safeReason));
+        log.setIpAddress(ipAddress);
+        auditLogRepository.save(log);
+
+        realtimeEventService.sendSubscription(targetUserId, "subscription.updated", Map.of(
+                "subscription", subscription
+        ));
+        realtimeEventService.sendAdminOverviewUpdated("admin.overview.updated", Map.of(
+                "reason", "subscription.admin_updated",
+                "userId", targetUserId
+        ));
+        return saved;
+    }
+
+    private String describeSubscription(User.SubscriptionInfo subscription) {
+        if (subscription == null) return "plan=free, status=inactive, currentPeriodEnd=null";
+        return "plan=" + Objects.toString(subscription.getPlan(), "free")
+                + ", status=" + Objects.toString(subscription.getStatus(), "inactive")
+                + ", currentPeriodEnd=" + Objects.toString(subscription.getCurrentPeriodEnd(), "null");
+    }
+
     public void hardDeleteUser(String actorUserId, String targetUserId, String ipAddress) {
         if (actorUserId.equals(targetUserId)) {
             throw new IllegalArgumentException("Thao tác nguy hiểm: Bạn không thể tự xóa tài khoản của chính mình.");

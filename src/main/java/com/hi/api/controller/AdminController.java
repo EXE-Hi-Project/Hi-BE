@@ -2,6 +2,7 @@ package com.hi.api.controller;
 
 import com.hi.api.dto.request.UpdateRoleRequest;
 import com.hi.api.dto.request.UpdateAccountStatusRequest;
+import com.hi.api.dto.request.AdminSubscriptionRequest;
 import com.hi.api.dto.request.AdminUserNotificationRequest;
 import com.hi.api.dto.request.AdminCampaignRequest;
 import com.hi.api.dto.request.UpsertAiCostRequest;
@@ -147,6 +148,32 @@ public class AdminController {
             String ipAddress = request.getRemoteAddr();
             User user = adminService.updateUserAccountStatus(admin.getId(), id, req.getStatus(), req.getReason(), ipAddress);
             return ResponseEntity.ok(Map.of("success", true, "user", user));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
+        }
+    }
+
+    @PatchMapping("/users/{id}/subscription")
+    public ResponseEntity<Map<String, Object>> updateUserSubscription(
+            @AuthenticationPrincipal User admin,
+            @PathVariable String id,
+            @Valid @RequestBody AdminSubscriptionRequest req,
+            HttpServletRequest request) {
+
+        try {
+            User user = adminService.updateUserSubscription(
+                    admin.getId(),
+                    id,
+                    req.getPlan(),
+                    req.getDurationDays(),
+                    req.getReason(),
+                    request.getRemoteAddr()
+            );
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Đã cập nhật gói tài khoản",
+                    "user", user
+            ));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", e.getMessage()));
         }
