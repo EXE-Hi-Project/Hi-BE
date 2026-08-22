@@ -549,7 +549,7 @@ public class CycleRecordService {
             estimatedCurrentStartDate = lastStartDate;
             estimatedCycleDay = recordedCycleDay;
             estimatedPhase = "Kinh nguyệt";
-        } else if (today.isBefore(predictedStartEarliest)) {
+        } else if (today.isBefore(estimatedPeriodStartDate)) {
             periodStatus = "UPCOMING";
             estimatedCurrentStartDate = lastStartDate;
             estimatedCycleDay = recordedCycleDay;
@@ -571,10 +571,12 @@ public class CycleRecordService {
                 ? (int) ChronoUnit.DAYS.between(predictedStartLatest, today)
                 : 0;
         Integer daysUntilEstimatedPeriod = "UPCOMING".equals(periodStatus)
-                ? (int) ChronoUnit.DAYS.between(today, predictedStartEarliest)
+                ? (int) ChronoUnit.DAYS.between(today, estimatedPeriodStartDate)
                 : null;
         Integer estimatedPeriodDay = "PREDICTED".equals(periodStatus)
-                ? (int) ChronoUnit.DAYS.between(predictedStartEarliest, today) + 1
+                && !today.isBefore(estimatedPeriodStartDate)
+                && !today.isAfter(estimatedPeriodEndDate)
+                ? (int) ChronoUnit.DAYS.between(estimatedPeriodStartDate, today) + 1
                 : null;
         String fertilityStatus = !fertilityEstimateAvailable
                 ? "UNKNOWN"
