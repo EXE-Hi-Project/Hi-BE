@@ -59,8 +59,37 @@ class CycleRecordServiceTest {
     }
 
     @Test
-    void getInsightsKeepsDateInsideUncertaintyWindowAsPredicted() {
+    void getInsightsKeepsDateBeforeCentralEstimateAsUpcoming() {
         String userId = "female-1";
+        CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(21), 28, 5);
+        User user = new User();
+        user.setId(userId);
+        user.setDefaultCycleLength(28);
+        user.setDefaultPeriodLength(5);
+
+        when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
+                .thenReturn(List.of(record));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of());
+
+        CycleRecordInsightResponse insights = service.getInsights(userId);
+
+        assertEquals("UPCOMING", insights.getPeriodStatus());
+        assertEquals(LocalDate.now().plusDays(7), insights.getEstimatedPeriodStartDate());
+        assertEquals(22, insights.getEstimatedCycleDay());
+        assertEquals(null, insights.getEstimatedPeriodDay());
+        assertEquals(0, insights.getPeriodDelayDays());
+        assertEquals(7, insights.getDaysUntilEstimatedPeriod());
+        assertEquals(null, insights.getConfirmedPeriodDay());
+        assertEquals("LOW", insights.getPredictionConfidence());
+        assertFalse(insights.getWarnings().isEmpty());
+        verify(cycleRecordRepository, never()).save(any());
+    }
+
+    @Test
+    void getInsightsCountsEstimatedPeriodDayFromCentralEstimate() {
+        String userId = "female-predicted";
         CycleRecord record = cycleRecord(userId, LocalDate.now().minusDays(29), 28, 5);
         User user = new User();
         user.setId(userId);
@@ -77,14 +106,9 @@ class CycleRecordServiceTest {
 
         assertEquals("PREDICTED", insights.getPeriodStatus());
         assertEquals(LocalDate.now().minusDays(1), insights.getEstimatedPeriodStartDate());
-        assertEquals(null, insights.getEstimatedCycleDay());
-        assertEquals(9, insights.getEstimatedPeriodDay());
-        assertEquals(0, insights.getPeriodDelayDays());
+        assertEquals(2, insights.getEstimatedPeriodDay());
         assertEquals(null, insights.getDaysUntilEstimatedPeriod());
         assertEquals(null, insights.getConfirmedPeriodDay());
-        assertEquals("LOW", insights.getPredictionConfidence());
-        assertFalse(insights.getWarnings().isEmpty());
-        verify(cycleRecordRepository, never()).save(any());
     }
 
     @Test
@@ -131,7 +155,7 @@ class CycleRecordServiceTest {
         CycleRecordInsightResponse insights = service.getInsights(userId);
 
         assertEquals("UPCOMING", insights.getPeriodStatus());
-        assertEquals(6, insights.getDaysUntilEstimatedPeriod());
+        assertEquals(13, insights.getDaysUntilEstimatedPeriod());
         assertEquals(null, insights.getEstimatedPeriodDay());
         assertEquals("UNKNOWN", insights.getFertilityStatus());
         assertFalse(insights.isFertilityEstimateAvailable());
