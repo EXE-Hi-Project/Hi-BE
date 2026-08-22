@@ -290,7 +290,7 @@ public class ReminderService {
         String status = insights.getPeriodStatus();
         if ("CONFIRMED".equalsIgnoreCase(status)
                 || "NEEDS_CONFIRMATION".equalsIgnoreCase(status)
-                || "PREDICTED".equalsIgnoreCase(status)
+                || ("PREDICTED".equalsIgnoreCase(status) && insights.getEstimatedPeriodDay() != null)
                 || ("DELAYED".equalsIgnoreCase(status)
                     && insights.getPeriodDelayDays() != null
                     && insights.getPeriodDelayDays() <= 14)) {
@@ -430,9 +430,11 @@ public class ReminderService {
         try {
             CycleRecordInsightResponse insights = cycleRecordService.getInsights(user.getId());
             if (insights != null) {
-                String periodStatus = insights.getPeriodStatus(); // "CONFIRMED", "PREDICTED", "DELAYED", "NONE"
-                if ("CONFIRMED".equalsIgnoreCase(periodStatus) || "PREDICTED".equalsIgnoreCase(periodStatus)) {
+                String periodStatus = insights.getPeriodStatus();
+                if ("CONFIRMED".equalsIgnoreCase(periodStatus)) {
                     return "Bạn đang trong kỳ kinh nguyệt nè. Hãy nhớ giữ ấm bụng, uống nhiều nước ấm và nghỉ ngơi nhiều hơn nhé. Hi luôn ở bên bạn!";
+                } else if ("PREDICTED".equalsIgnoreCase(periodStatus)) {
+                    return "Kỳ kinh của bạn đang nằm trong khoảng dự đoán. Chỉ xác nhận khi kỳ kinh thực sự bắt đầu và tiếp tục lắng nghe cơ thể nhé.";
                 } else if ("DELAYED".equalsIgnoreCase(periodStatus)) {
                     return "Kỳ kinh của bạn đang trễ một xíu rồi đó. Hãy thư giãn đầu óc, tránh căng thẳng và ghi lại các biểu hiện để Hi theo dõi nha.";
                 }

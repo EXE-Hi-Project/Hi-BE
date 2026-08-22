@@ -42,6 +42,18 @@ public class CycleRecordInsightResponse {
     LocalDate predictedStartLatest;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate predictionRange50Start;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate predictionRange50End;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate predictionRange80Start;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate predictionRange80End;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
     LocalDate estimatedNextStartDate;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
@@ -49,6 +61,12 @@ public class CycleRecordInsightResponse {
 
     @JsonFormat(pattern = "yyyy-MM-dd")
     LocalDate estimatedOvulationDate;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate ovulationDateEarliest;
+
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    LocalDate ovulationDateLatest;
 
     @JsonFormat(pattern = "yyyy-MM-dd")
     LocalDate fertileWindowStartDate;
@@ -69,6 +87,13 @@ public class CycleRecordInsightResponse {
     String fertilityStatus;
     String predictionConfidence;
     String predictionBasis;
+    String predictionModel;
+    Double predictionErrorMedianDays;
+    Integer predictionInterval50Days;
+    Integer predictionInterval80Days;
+    Integer estimatedPeriodLengthMin;
+    Integer estimatedPeriodLengthMax;
+    Integer suspectedMissedCycleCount;
     List<String> dataQualityIssues;
     Integer cycleCompleteness;
     boolean fertilityEstimateAvailable;

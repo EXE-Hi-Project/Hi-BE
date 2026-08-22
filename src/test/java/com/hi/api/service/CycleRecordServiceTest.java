@@ -541,6 +541,93 @@ class CycleRecordServiceTest {
         assertEquals(null, insights.getEstimatedOvulationDate());
     }
 
+    @Test
+    void predictionIgnoresIntervalThatLooksLikeMissedTracking() {
+        String userId = "female-missed-tracking";
+        LocalDate latestStart = LocalDate.now().minusDays(10);
+        List<LocalDate> starts = List.of(
+                latestStart.minusDays(168),
+                latestStart.minusDays(140),
+                latestStart.minusDays(112),
+                latestStart.minusDays(56),
+                latestStart.minusDays(28),
+                latestStart
+        );
+        List<CycleRecord> records = new java.util.ArrayList<>();
+        for (int index = 0; index < starts.size(); index++) {
+            CycleRecord record = cycleRecord(userId, starts.get(index), 28, 5);
+            record.setId((long) index + 1);
+            record.setEndDate(record.getStartDate().plusDays(4));
+            record.setLastBleedingDate(record.getEndDate());
+            record.setStatus(CycleRecordStatus.COMPLETED);
+            record.setEndDateEstimated(false);
+            records.add(record);
+        }
+        User user = new User();
+        user.setId(userId);
+        user.setDefaultCycleLength(28);
+        user.setDefaultPeriodLength(5);
+
+        when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
+                .thenReturn(records);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of());
+
+        CycleRecordInsightResponse insights = service.getInsights(userId);
+
+        assertEquals(latestStart.plusDays(28), insights.getEstimatedPeriodStartDate());
+        assertEquals(1, insights.getSuspectedMissedCycleCount());
+        assertTrue(insights.getDataQualityIssues().stream().anyMatch(issue -> issue.contains("bỏ sót")));
+        assertEquals("cycle-v3", insights.getAlgorithmVersion());
+    }
+
+    @Test
+    void predictionReturnsCalibratedRangesAndPeriodLengthRange() {
+        String userId = "female-calibrated-range";
+        LocalDate latestStart = LocalDate.now().minusDays(12);
+        List<Integer> intervals = List.of(28, 29, 27, 30, 28, 29, 28);
+        List<LocalDate> starts = new java.util.ArrayList<>();
+        LocalDate start = latestStart;
+        starts.add(start);
+        for (int index = intervals.size() - 1; index >= 0; index--) {
+            start = start.minusDays(intervals.get(index));
+            starts.add(start);
+        }
+        List<CycleRecord> records = new java.util.ArrayList<>();
+        for (int index = 0; index < starts.size(); index++) {
+            CycleRecord record = cycleRecord(userId, starts.get(index), 28, 4 + index % 3);
+            record.setId((long) index + 1);
+            record.setEndDate(record.getStartDate().plusDays(record.getPeriodLength() - 1L));
+            record.setLastBleedingDate(record.getEndDate());
+            record.setStatus(CycleRecordStatus.COMPLETED);
+            record.setEndDateEstimated(false);
+            records.add(record);
+        }
+        User user = new User();
+        user.setId(userId);
+        user.setDefaultCycleLength(28);
+        user.setDefaultPeriodLength(5);
+
+        when(cycleRecordRepository.findByUserIdAndIsIgnoredFalseOrderByStartDateDesc(userId))
+                .thenReturn(records);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(dailyLogRepository.findByUserIdAndLogDateBetweenOrderByLogDateDesc(any(), any(), any()))
+                .thenReturn(List.of());
+
+        CycleRecordInsightResponse insights = service.getInsights(userId);
+
+        assertTrue(insights.getPredictionInterval50Days() >= 2);
+        assertTrue(insights.getPredictionInterval80Days() > insights.getPredictionInterval50Days());
+        assertEquals(insights.getEstimatedPeriodStartDate().minusDays(insights.getPredictionInterval50Days()),
+                insights.getPredictionRange50Start());
+        assertEquals(insights.getEstimatedPeriodStartDate().plusDays(insights.getPredictionInterval80Days()),
+                insights.getPredictionRange80End());
+        assertTrue(insights.getEstimatedPeriodLengthMin() <= insights.getEstimatedPeriodLengthMax());
+        assertTrue(insights.getPredictionModel() != null && !insights.getPredictionModel().isBlank());
+        assertTrue(insights.getPredictionErrorMedianDays() != null);
+    }
+
     private CycleRecord cycleRecord(String userId, LocalDate startDate, int cycleLength, int periodLength) {
         CycleRecord record = new CycleRecord();
         record.setId(1L);
