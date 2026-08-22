@@ -46,8 +46,8 @@ public class CycleRecordService {
     private static final int MAX_CYCLE_LENGTH = 90;
     private static final int MIN_PERIOD_LENGTH = 1;
     private static final int STALE_PERIOD_GAP_DAYS = 2;
-    private static final int MAX_PREDICTION_CYCLES = 6;
-    private static final String ALGORITHM_VERSION = "cycle-v2";
+    private static final int MAX_PREDICTION_CYCLES = 12;
+    private static final String ALGORITHM_VERSION = "cycle-v3";
     private static final int TYPICAL_MIN_CYCLE_LENGTH = 21;
     private static final int TYPICAL_MAX_CYCLE_LENGTH = 35;
     private static final int TYPICAL_MIN_PERIOD_LENGTH = 2;
@@ -485,19 +485,27 @@ public class CycleRecordService {
                 .filter(this::isPlausiblePeriodLength)
                 .toList();
 
-        List<Integer> predictionIntervals = tail(intervals, MAX_PREDICTION_CYCLES);
-        int estimatedCycleLength = robustEstimateOrFallback(
-                !predictionIntervals.isEmpty() ? predictionIntervals : tail(recordedCycleLengths, MAX_PREDICTION_CYCLES),
-                user != null ? user.getDefaultCycleLength() : null,
+        PredictionSeries predictionSeries = preparePredictionSeries(intervals);
+        List<Integer> predictionIntervals = tail(predictionSeries.usableIntervals(), MAX_PREDICTION_CYCLES);
+        Integer personalFallback = user != null ? user.getDefaultCycleLength() : null;
+        List<Integer> fallbackCycleLengths = tail(recordedCycleLengths, MAX_PREDICTION_CYCLES);
+        CycleForecast cycleForecast = forecastCycleLength(
+                !predictionIntervals.isEmpty() ? predictionIntervals : fallbackCycleLengths,
+                personalFallback,
                 DEFAULT_CYCLE_LENGTH);
+        int estimatedCycleLength = cycleForecast.days();
         int estimatedPeriodLength = robustEstimateOrFallback(
                 tail(periodLengths, MAX_PREDICTION_CYCLES),
                 user != null ? user.getDefaultPeriodLength() : null,
                 DEFAULT_PERIOD_LENGTH);
 
-        Double averageCycleLength = intervals.isEmpty()
+        LengthRange periodLengthRange = estimatePeriodLengthRange(
+                tail(periodLengths, MAX_PREDICTION_CYCLES),
+                estimatedPeriodLength);
+
+        Double averageCycleLength = predictionIntervals.isEmpty()
                 ? averageOrNull(recordedCycleLengths)
-                : averageOrNull(intervals);
+                : averageOrNull(predictionIntervals);
         Double averagePeriodLength = averageOrNull(periodLengths);
 
         LocalDate lastStartDate = latest.getStartDate();
@@ -509,19 +517,41 @@ public class CycleRecordService {
         LocalDate lastEndDate = periodOngoing ? null : lastBleedingDate;
         LocalDate estimatedPeriodStartDate = lastStartDate.plusDays(estimatedCycleLength);
         LocalDate estimatedPeriodEndDate = estimatedPeriodStartDate.plusDays(estimatedPeriodLength - 1L);
-        List<String> dataQualityIssues = buildDataQualityIssues(sorted, intervals, user, today);
-        int uncertaintyDays = predictionUncertaintyDays(predictionIntervals, dataQualityIssues);
+        List<String> dataQualityIssues = buildDataQualityIssues(
+                sorted,
+                intervals,
+                predictionSeries.suspectedMissedCycles(),
+                user,
+                today);
+        PredictionUncertainty predictionUncertainty = predictionUncertainty(
+                predictionIntervals,
+                cycleForecast.backtestErrors(),
+                dataQualityIssues);
+        int uncertaintyDays = predictionUncertainty.range80Days();
+        LocalDate predictionRange50Start = estimatedPeriodStartDate.minusDays(predictionUncertainty.range50Days());
+        LocalDate predictionRange50End = estimatedPeriodStartDate.plusDays(predictionUncertainty.range50Days());
         LocalDate predictedStartEarliest = estimatedPeriodStartDate.minusDays(uncertaintyDays);
         LocalDate predictedStartLatest = estimatedPeriodStartDate.plusDays(uncertaintyDays);
-        String predictionConfidence = resolvePredictionConfidence(predictionIntervals, dataQualityIssues);
+        String predictionConfidence = resolvePredictionConfidence(
+                predictionIntervals,
+                predictionUncertainty,
+                dataQualityIssues);
         boolean fertilityEstimateAvailable = isFertilityEstimateAvailable(user, predictionConfidence, dataQualityIssues);
         LocalDate estimatedOvulationDate = fertilityEstimateAvailable
                 ? estimatedPeriodStartDate.minusDays(14)
                 : null;
-        LocalDate fertileWindowStartDate = estimatedOvulationDate != null
-                ? estimatedOvulationDate.minusDays(5 + uncertaintyDays)
+        LocalDate ovulationDateEarliest = fertilityEstimateAvailable
+                ? predictedStartEarliest.minusDays(16)
                 : null;
-        LocalDate fertileWindowEndDate = estimatedOvulationDate;
+        LocalDate ovulationDateLatest = fertilityEstimateAvailable
+                ? predictedStartLatest.minusDays(12)
+                : null;
+        LocalDate fertileWindowStartDate = ovulationDateEarliest != null
+                ? ovulationDateEarliest.minusDays(5)
+                : null;
+        LocalDate fertileWindowEndDate = ovulationDateLatest != null
+                ? ovulationDateLatest.plusDays(1)
+                : null;
 
         int recordedCycleDay = (int) ChronoUnit.DAYS.between(lastStartDate, today) + 1;
         Integer confirmedPeriodDay = null;
@@ -584,15 +614,14 @@ public class CycleRecordService {
                     ? "ESTIMATED_WINDOW"
                     : "OUTSIDE_ESTIMATED_WINDOW";
 
-        boolean hasOutliers = intervals.stream().anyMatch(value -> !isTypicalCycleLength(value, user))
-                || recordedCycleLengths.stream().anyMatch(value -> !isTypicalCycleLength(value, user))
+        boolean hasOutliers = predictionIntervals.stream().anyMatch(value -> !isTypicalCycleLength(value, user))
                 || periodLengths.stream().anyMatch(value -> !isTypicalPeriodLength(value));
-        List<String> warnings = buildWarnings(hasOutliers, intervals.size(), periodLengths, periodDelayDays, dataQualityIssues);
+        List<String> warnings = buildWarnings(hasOutliers, predictionIntervals.size(), periodLengths, periodDelayDays, dataQualityIssues);
         if (periodOngoing && confirmedPeriodDay != null && confirmedPeriodDay > TYPICAL_MAX_PERIOD_LENGTH) {
             warnings.add("Kỳ kinh đã được ghi nhận trên 7 ngày. Bạn vẫn có thể tiếp tục theo dõi, nhưng nên trao đổi với bác sĩ nếu tình trạng kéo dài hoặc lượng máu nhiều.");
         }
         appendClinicalLogWarnings(userId, warnings, today.minusDays(90), today);
-        RegularityAssessment regularity = assessRegularity(sorted, intervals, periodLengths, hasOutliers, user);
+        RegularityAssessment regularity = assessRegularity(sorted, predictionIntervals, periodLengths, hasOutliers, user);
         List<CycleRecordInsightResponse.CycleTrendPoint> trendPoints = buildTrendPoints(sorted, intervals);
 
         SymptomAnalytics analytics = analyzeSymptoms(
@@ -614,9 +643,15 @@ public class CycleRecordService {
                 .estimatedPeriodEndDate(estimatedPeriodEndDate)
                 .predictedStartEarliest(predictedStartEarliest)
                 .predictedStartLatest(predictedStartLatest)
+                .predictionRange50Start(predictionRange50Start)
+                .predictionRange50End(predictionRange50End)
+                .predictionRange80Start(predictedStartEarliest)
+                .predictionRange80End(predictedStartLatest)
                 .estimatedNextStartDate(estimatedPeriodStartDate)
                 .estimatedNextEndDate(estimatedPeriodEndDate)
                 .estimatedOvulationDate(estimatedOvulationDate)
+                .ovulationDateEarliest(ovulationDateEarliest)
+                .ovulationDateLatest(ovulationDateLatest)
                 .fertileWindowStartDate(fertileWindowStartDate)
                 .fertileWindowEndDate(fertileWindowEndDate)
                 .currentCycleDay(estimatedCycleDay)
@@ -632,8 +667,17 @@ public class CycleRecordService {
                 .fertilityStatus(fertilityStatus)
                 .predictionConfidence(predictionConfidence)
                 .predictionBasis(predictionIntervals.isEmpty()
-                        ? "Mặc định cá nhân; chưa đủ khoảng chu kỳ hoàn chỉnh"
-                        : "Trung vị có trọng số của " + predictionIntervals.size() + " khoảng chu kỳ gần nhất")
+                        ? fallbackCycleLengths.isEmpty()
+                            ? "Mặc định cá nhân; chưa đủ khoảng chu kỳ hoàn chỉnh"
+                            : cycleForecast.description() + " từ độ dài chu kỳ đã lưu; chưa có đủ ngày bắt đầu liên tiếp"
+                        : cycleForecast.description() + " từ " + predictionIntervals.size() + " khoảng chu kỳ gần nhất")
+                .predictionModel(cycleForecast.model())
+                .predictionErrorMedianDays(medianOrNull(cycleForecast.backtestErrors()))
+                .predictionInterval50Days(predictionUncertainty.range50Days())
+                .predictionInterval80Days(predictionUncertainty.range80Days())
+                .estimatedPeriodLengthMin(periodLengthRange.minDays())
+                .estimatedPeriodLengthMax(periodLengthRange.maxDays())
+                .suspectedMissedCycleCount(predictionSeries.suspectedMissedCycles())
                 .dataQualityIssues(dataQualityIssues)
                 .cycleCompleteness(calculateCompleteness(sorted))
                 .fertilityEstimateAvailable(fertilityEstimateAvailable)
@@ -1096,6 +1140,112 @@ public class CycleRecordService {
         return Math.max(1, values.get(values.size() - 1));
     }
 
+    private PredictionSeries preparePredictionSeries(List<Integer> rawIntervals) {
+        List<Integer> plausible = rawIntervals.stream()
+                .filter(this::isPlausibleCycleLength)
+                .toList();
+        if (plausible.size() < 4) {
+            return new PredictionSeries(plausible, 0);
+        }
+
+        double baseline = median(plausible);
+        int suspectedMissedCycles = 0;
+        List<Integer> usable = new ArrayList<>();
+        for (Integer interval : plausible) {
+            int multiple = (int) Math.round(interval / Math.max(baseline, 1.0));
+            boolean resemblesSkippedTracking = multiple >= 2
+                    && multiple <= 3
+                    && Math.abs((interval / (double) multiple) - baseline) <= Math.max(3.0, baseline * 0.15);
+            if (resemblesSkippedTracking) {
+                suspectedMissedCycles += multiple - 1;
+            } else {
+                usable.add(interval);
+            }
+        }
+
+        // Không loại dữ liệu khi mọi khoảng đều dài tương tự nhau: đó có thể là
+        // đặc điểm chu kỳ thật, không phải hành vi quên ghi nhận.
+        if (usable.size() < 4) {
+            return new PredictionSeries(plausible, 0);
+        }
+        return new PredictionSeries(usable, suspectedMissedCycles);
+    }
+
+    private CycleForecast forecastCycleLength(List<Integer> values, Integer fallback, int defaultValue) {
+        if (values.isEmpty()) {
+            int fallbackDays = fallback != null ? fallback : defaultValue;
+            return new CycleForecast(fallbackDays, "PERSONAL_DEFAULT", "Mặc định cá nhân", List.of());
+        }
+
+        List<Integer> history = tail(values, MAX_PREDICTION_CYCLES);
+        List<ForecastCandidate> candidates = List.of(
+                new ForecastCandidate("WEIGHTED_MEDIAN", "Trung vị có trọng số", this::weightedMedianForecast),
+                new ForecastCandidate("EWMA", "Trung bình thích nghi theo dữ liệu gần đây", this::ewmaForecast),
+                new ForecastCandidate("RECENT_MEDIAN", "Trung vị ba chu kỳ gần nhất", this::recentMedianForecast)
+        );
+
+        ForecastCandidate selected = candidates.get(0);
+        List<Integer> selectedErrors = backtest(history, selected.predictor());
+        if (history.size() >= 5) {
+            double bestMae = meanAbsoluteError(selectedErrors);
+            for (int index = 1; index < candidates.size(); index++) {
+                ForecastCandidate candidate = candidates.get(index);
+                List<Integer> errors = backtest(history, candidate.predictor());
+                double mae = meanAbsoluteError(errors);
+                if (mae < bestMae) {
+                    selected = candidate;
+                    selectedErrors = errors;
+                    bestMae = mae;
+                }
+            }
+        }
+
+        int days = Math.max(MIN_CYCLE_LENGTH, Math.min(MAX_CYCLE_LENGTH, selected.predictor().predict(history)));
+        return new CycleForecast(days, selected.model(), selected.description(), selectedErrors);
+    }
+
+    private int weightedMedianForecast(List<Integer> values) {
+        return robustEstimateOrFallback(values, null, DEFAULT_CYCLE_LENGTH);
+    }
+
+    private int ewmaForecast(List<Integer> values) {
+        double estimate = values.get(0);
+        double alpha = 0.35;
+        for (int index = 1; index < values.size(); index++) {
+            estimate = alpha * values.get(index) + (1.0 - alpha) * estimate;
+        }
+        return (int) Math.round(estimate);
+    }
+
+    private int recentMedianForecast(List<Integer> values) {
+        return (int) Math.round(median(tail(values, 3)));
+    }
+
+    private List<Integer> backtest(List<Integer> history, CyclePredictor predictor) {
+        if (history.size() < 4) return List.of();
+        List<Integer> errors = new ArrayList<>();
+        for (int index = 3; index < history.size(); index++) {
+            int predicted = predictor.predict(history.subList(0, index));
+            errors.add(Math.abs(history.get(index) - predicted));
+        }
+        return errors;
+    }
+
+    private double meanAbsoluteError(List<Integer> errors) {
+        if (errors.isEmpty()) return Double.POSITIVE_INFINITY;
+        return errors.stream().mapToInt(Integer::intValue).average().orElse(Double.POSITIVE_INFINITY);
+    }
+
+    private LengthRange estimatePeriodLengthRange(List<Integer> periodLengths, int center) {
+        if (periodLengths.size() < 3) {
+            return new LengthRange(Math.max(1, center - 1), center + 1);
+        }
+        List<Integer> sorted = periodLengths.stream().sorted().toList();
+        int min = Math.max(1, percentile(sorted, 0.25));
+        int max = Math.max(min, percentile(sorted, 0.75));
+        return new LengthRange(Math.min(min, center), Math.max(max, center));
+    }
+
     private List<Integer> tail(List<Integer> values, int limit) {
         if (values.size() <= limit) return values;
         return values.subList(values.size() - limit, values.size());
@@ -1119,25 +1269,59 @@ public class CycleRecordService {
         return median(deviations);
     }
 
-    private int predictionUncertaintyDays(List<Integer> intervals, List<String> dataQualityIssues) {
-        if (intervals.size() < 3) return 7;
-        int uncertainty = Math.max(2, (int) Math.ceil(1.4826 * medianAbsoluteDeviation(intervals)));
-        if (!dataQualityIssues.isEmpty()) uncertainty = Math.max(uncertainty, 7);
-        return Math.min(14, uncertainty);
+    private PredictionUncertainty predictionUncertainty(List<Integer> intervals,
+                                                        List<Integer> backtestErrors,
+                                                        List<String> dataQualityIssues) {
+        int range50;
+        int range80;
+        if (backtestErrors.size() >= 3) {
+            List<Integer> sortedErrors = backtestErrors.stream().sorted().toList();
+            range50 = Math.max(2, percentile(sortedErrors, 0.50));
+            range80 = Math.max(range50 + 1, percentile(sortedErrors, 0.80));
+        } else if (intervals.size() >= 3) {
+            double sigma = 1.4826 * medianAbsoluteDeviation(intervals);
+            range50 = Math.max(2, (int) Math.ceil(0.6745 * sigma));
+            range80 = Math.max(range50 + 1, (int) Math.ceil(1.2816 * sigma));
+        } else {
+            range50 = 3;
+            range80 = 7;
+        }
+
+        if (!dataQualityIssues.isEmpty()) {
+            range50 = Math.max(range50, 3);
+            range80 = Math.max(range80, 7);
+        }
+        return new PredictionUncertainty(Math.min(7, range50), Math.min(14, range80));
     }
 
-    private String resolvePredictionConfidence(List<Integer> intervals, List<String> dataQualityIssues) {
-        double mad = medianAbsoluteDeviation(intervals);
-        if (intervals.size() >= 6 && mad <= 2.0 && dataQualityIssues.isEmpty()) return "HIGH";
-        if (intervals.size() >= 3 && mad <= 5.0
-                && dataQualityIssues.stream().noneMatch(issue -> issue.contains("bối cảnh"))) {
+    private String resolvePredictionConfidence(List<Integer> intervals,
+                                               PredictionUncertainty uncertainty,
+                                               List<String> dataQualityIssues) {
+        boolean hasCriticalIssue = dataQualityIssues.stream().anyMatch(issue ->
+                issue.contains("không đều")
+                        || issue.contains("bối cảnh")
+                        || issue.contains("cần xác nhận")
+                        || issue.contains("quá 90 ngày"));
+        if (intervals.size() >= 6 && uncertainty.range80Days() <= 3 && dataQualityIssues.isEmpty()) return "HIGH";
+        if (intervals.size() >= 3 && uncertainty.range80Days() <= 7 && !hasCriticalIssue) {
             return "MEDIUM";
         }
         return "LOW";
     }
 
+    private int percentile(List<Integer> sortedValues, double percentile) {
+        if (sortedValues.isEmpty()) return 0;
+        int index = (int) Math.ceil(percentile * sortedValues.size()) - 1;
+        return sortedValues.get(Math.max(0, Math.min(index, sortedValues.size() - 1)));
+    }
+
+    private Double medianOrNull(List<Integer> values) {
+        return values.isEmpty() ? null : round2(median(values));
+    }
+
     private List<String> buildDataQualityIssues(List<CycleRecord> records,
                                                 List<Integer> intervals,
+                                                int suspectedMissedCycles,
                                                 User user,
                                                 LocalDate today) {
         List<String> issues = new ArrayList<>();
@@ -1154,6 +1338,9 @@ public class CycleRecordService {
         }
         if (intervals.stream().anyMatch(interval -> interval < MIN_CYCLE_LENGTH || interval > MAX_CYCLE_LENGTH)) {
             issues.add("Có khoảng chu kỳ dưới 10 hoặc trên 90 ngày; có thể thiếu lần ghi nhận");
+        }
+        if (suspectedMissedCycles > 0) {
+            issues.add("Có " + suspectedMissedCycles + " kỳ có thể đã bị bỏ sót khi ghi nhận; các khoảng này không được dùng để dự đoán");
         }
         if (intervals.stream().anyMatch(interval -> !isTypicalCycleLength(interval, user))) {
             issues.add("Có khoảng chu kỳ ngoài khoảng tham chiếu theo độ tuổi");
@@ -1180,7 +1367,7 @@ public class CycleRecordService {
     private boolean isFertilityEstimateAvailable(User user,
                                                  String predictionConfidence,
                                                  List<String> dataQualityIssues) {
-        return !"LOW".equals(predictionConfidence)
+        return "HIGH".equals(predictionConfidence)
                 && !Boolean.TRUE.equals(user != null ? user.getIrregularCycle() : null)
                 && !hasFertilitySuppressingContext(user)
                 && dataQualityIssues.stream().noneMatch(issue ->
@@ -1292,4 +1479,24 @@ public class CycleRecordService {
     private record RegularityAssessment(String status, int score, String label, List<String> reasons) {}
 
     private record WeightedValue(int value, int weight) {}
+
+    private record PredictionSeries(List<Integer> usableIntervals, int suspectedMissedCycles) {}
+
+    private record CycleForecast(
+            int days,
+            String model,
+            String description,
+            List<Integer> backtestErrors
+    ) {}
+
+    private record PredictionUncertainty(int range50Days, int range80Days) {}
+
+    private record LengthRange(int minDays, int maxDays) {}
+
+    @FunctionalInterface
+    private interface CyclePredictor {
+        int predict(List<Integer> history);
+    }
+
+    private record ForecastCandidate(String model, String description, CyclePredictor predictor) {}
 }
