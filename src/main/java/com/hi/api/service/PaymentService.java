@@ -40,6 +40,9 @@ public class PaymentService {
     @Value("${app.payment.return-url.allowed-origins:${app.client-url}}")
     private String allowedReturnOrigins;
 
+    @Value("${app.cors.desktop-origin:hi-app://renderer}")
+    private String desktopOrigin;
+
     public PaymentService(
             UserRepository userRepository,
             TransactionRepository transactionRepository,
@@ -132,6 +135,9 @@ public class PaymentService {
             return fallback;
         }
         String requested = normalizeOrigin(originUrl);
+        if (requested.equals(normalizeOrigin(desktopOrigin))) {
+            return fallback;
+        }
         boolean allowed = Arrays.stream(allowedReturnOrigins.split(","))
                 .map(this::normalizeOrigin)
                 .anyMatch(requested::equals);

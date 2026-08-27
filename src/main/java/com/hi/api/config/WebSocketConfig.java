@@ -30,6 +30,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Value("${app.cors.allowed-origins:http://localhost:5173}")
     private String allowedOriginsStr;
 
+    @Value("${app.cors.desktop-origin:hi-app://renderer}")
+    private String desktopOrigin;
+
     @Value("${app.cors.allow-vercel-preview:false}")
     private boolean allowVercelPreview;
 
@@ -80,7 +83,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                     }
                 });
 
-        String[] origins = Arrays.stream(allowedOriginsStr.split(","))
+        String[] origins = Arrays.stream((allowedOriginsStr + "," + desktopOrigin).split(","))
                 .map(String::trim)
                 .filter(value -> !value.isBlank())
                 .toArray(String[]::new);

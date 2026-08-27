@@ -26,6 +26,7 @@
         <aws.sdk.version>2.47.4</aws.sdk.version>
         <spring-ai.version>1.0.0</spring-ai.version>
         <lombok.version>1.18.46</lombok.version>
+        <cloudinary.version>2.4.0</cloudinary.version>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -132,6 +133,13 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>bedrockruntime</artifactId>
+        </dependency>
+
+        <!-- Cloudinary image upload and asset administration -->
+        <dependency>
+            <groupId>com.cloudinary</groupId>
+            <artifactId>cloudinary-http5</artifactId>
+            <version>${cloudinary.version}</version>
         </dependency>
         <dependency>
             <groupId>software.amazon.awssdk</groupId>

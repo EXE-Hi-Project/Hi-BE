@@ -46,6 +46,9 @@ public class SecurityConfig {
     @Value("${app.cors.allowed-origins:http://localhost:5173,http://localhost:8081}")
     private String allowedOriginsStr;
 
+    @Value("${app.cors.desktop-origin:hi-app://renderer}")
+    private String desktopOrigin;
+
     @Value("${app.cors.allow-vercel-preview:false}")
     private boolean allowVercelPreview;
 
@@ -154,7 +157,7 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        List<String> origins = Arrays.stream(allowedOriginsStr.split(","))
+        List<String> origins = Arrays.stream((allowedOriginsStr + "," + desktopOrigin).split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .toList();
@@ -170,6 +173,7 @@ public class SecurityConfig {
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of(
                 "Content-Type",
+                "Cache-Control",
                 "Authorization",
                 "X-XSRF-TOKEN",
                 "X-Requested-With",

@@ -32,6 +32,7 @@ class VoucherOrderReturnUrlTest {
                 "allowedReturnOrigins",
                 "https://hilover.space,https://www.hilover.space"
         );
+        ReflectionTestUtils.setField(service, "desktopOrigin", "hi-app://renderer");
 
         assertEquals(
                 "https://m.hilover.space",
@@ -44,6 +45,10 @@ class VoucherOrderReturnUrlTest {
         assertEquals(
                 "https://www.hilover.space",
                 service.resolveReturnBaseUrl("https://www.hilover.space/", CreateVoucherCheckoutRequest.Client.WEB)
+        );
+        assertEquals(
+                "https://hilover.space",
+                service.resolveReturnBaseUrl("hi-app://renderer", CreateVoucherCheckoutRequest.Client.WEB)
         );
     }
 }

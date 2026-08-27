@@ -17,6 +17,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -42,8 +43,14 @@ public class AuthService {
     @Value("${app.admin.emails:}")
     private String adminEmailsStr;
 
-    @Value("${app.google.client-id:}")
-    private String googleClientId;
+    @Value("${app.google.client-ids:${app.google.client-id:}}")
+    private String googleClientIds;
+
+    @Value("${app.facebook.app-id:}")
+    private String facebookAppId;
+
+    @Value("${app.facebook.app-secret:}")
+    private String facebookAppSecret;
 
     public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder,
             JwtUtil jwtUtil, PasswordResetTokenRepository tokenRepository,
@@ -72,6 +79,14 @@ public class AuthService {
                 .map(String::trim)
                 .map(String::toLowerCase)
                 .filter(s -> !s.isEmpty())
+                .toList();
+    }
+
+    private List<String> getGoogleClientIds() {
+        if (googleClientIds == null || googleClientIds.isBlank()) return List.of();
+        return Arrays.stream(googleClientIds.split(","))
+                .map(String::trim)
+                .filter(clientId -> !clientId.isBlank())
                 .toList();
     }
 
@@ -160,13 +175,12 @@ public class AuthService {
         if (req.getCredential() == null || req.getCredential().isBlank()) {
             throw new IllegalArgumentException("Thiếu Google credential");
         }
-        if (googleClientId == null || googleClientId.isBlank()) {
-            throw new IllegalStateException("GOOGLE_CLIENT_ID chưa được cấu hình trên server");
-        }
+        List<String> audiences = getGoogleClientIds();
+        if (audiences.isEmpty()) throw new IllegalStateException("Google OAuth chưa được cấu hình trên server");
 
         GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
                 new NetHttpTransport(), GsonFactory.getDefaultInstance())
-                .setAudience(Collections.singletonList(googleClientId))
+                .setAudience(audiences)
                 .build();
 
         GoogleIdToken idToken = verifier.verify(req.getCredential());
@@ -240,6 +254,8 @@ public class AuthService {
             throw new IllegalArgumentException("Thiếu Facebook access token");
         }
 
+        verifyFacebookToken(req.getAccessToken());
+
         String url = "https://graph.facebook.com/me?fields=id,name,email,picture.type(large)&access_token="
                 + req.getAccessToken();
         Map<String, Object> userInfo;
@@ -306,6 +322,32 @@ public class AuthService {
 
         userRepository.save(user);
         return buildAuthPayload(user);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void verifyFacebookToken(String accessToken) {
+        if (facebookAppId == null || facebookAppId.isBlank() || facebookAppSecret == null || facebookAppSecret.isBlank()) {
+            throw new IllegalStateException("Facebook OAuth chưa được cấu hình trên server");
+        }
+        String debugUrl = UriComponentsBuilder.fromHttpUrl("https://graph.facebook.com/debug_token")
+                .queryParam("input_token", accessToken)
+                .queryParam("access_token", facebookAppId + "|" + facebookAppSecret)
+                .toUriString();
+        Map<String, Object> response;
+        try {
+            response = restTemplate.getForObject(debugUrl, Map.class);
+        } catch (RestClientResponseException exception) {
+            throw new IllegalArgumentException("Facebook token không hợp lệ");
+        }
+        Object rawData = response != null ? response.get("data") : null;
+        if (!(rawData instanceof Map<?, ?> data)) {
+            throw new IllegalArgumentException("Facebook token không hợp lệ");
+        }
+        boolean valid = Boolean.TRUE.equals(data.get("is_valid"));
+        String appId = String.valueOf(data.get("app_id"));
+        if (!valid || !facebookAppId.equals(appId)) {
+            throw new IllegalArgumentException("Facebook token không hợp lệ");
+        }
     }
 
     public Map<String, Object> buildAuthPayload(User user) {

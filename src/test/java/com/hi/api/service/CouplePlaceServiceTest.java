@@ -72,8 +72,7 @@ class CouplePlaceServiceTest {
                 sequenceService,
                 restTemplate,
                 partnerAccessService,
-                mock(software.amazon.awssdk.services.s3.S3Client.class),
-                mock(software.amazon.awssdk.services.s3.presigner.S3Presigner.class),
+                mock(CloudinaryMediaService.class),
                 mock(RateLimitService.class),
                 mock(PendingMediaUploadService.class)
         );
@@ -358,7 +357,6 @@ class CouplePlaceServiceTest {
         place.setVisibility(CouplePlaceVisibility.PUBLIC);
         when(placeRepository.findById(45L)).thenReturn(Optional.of(place));
         ReflectionTestUtils.setField(service, "photoUploadEnabled", true);
-        ReflectionTestUtils.setField(service, "mediaBucket", "hi-user-media");
         PresignCouplePlacePhotoRequest request = new PresignCouplePlacePhotoRequest();
         request.setFileName("place.jpg");
         request.setContentType("image/jpeg");

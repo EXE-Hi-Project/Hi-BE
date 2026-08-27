@@ -20,6 +20,7 @@ class SecurityConfigTest {
     void corsDoesNotAllowWildcardHeadersWithCredentials() {
         SecurityConfig config = new SecurityConfig(mock(JwtUtil.class), mock(UserRepository.class));
         ReflectionTestUtils.setField(config, "allowedOriginsStr", "https://hilover.space");
+        ReflectionTestUtils.setField(config, "desktopOrigin", "hi-app://renderer");
         ReflectionTestUtils.setField(config, "allowVercelPreview", false);
 
         CorsConfiguration cors = config.corsConfigurationSource()
@@ -27,6 +28,7 @@ class SecurityConfigTest {
 
         assertEquals(List.of(
                 "Content-Type",
+                "Cache-Control",
                 "Authorization",
                 "X-XSRF-TOKEN",
                 "X-Requested-With",
@@ -34,6 +36,7 @@ class SecurityConfigTest {
                 "X-Idempotency-Key"
         ), cors.getAllowedHeaders());
         assertEquals(Boolean.TRUE, cors.getAllowCredentials());
+        assertEquals(List.of("https://hilover.space", "hi-app://renderer"), cors.getAllowedOrigins());
     }
 
     @Test

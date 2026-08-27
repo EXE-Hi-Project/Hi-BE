@@ -45,6 +45,9 @@ public class VoucherOrderService {
     @Value("${app.payment.return-url.allowed-origins:${app.client-url}}")
     private String allowedReturnOrigins;
 
+    @Value("${app.cors.desktop-origin:hi-app://renderer}")
+    private String desktopOrigin;
+
     public VoucherOrderService(VoucherOrderRepository voucherOrderRepository,
                                TransactionRepository transactionRepository,
                                AffiliateProductService affiliateProductService,
@@ -269,6 +272,9 @@ public class VoucherOrderService {
             return fallback;
         }
         String requested = normalizeOrigin(originUrl);
+        if (requested.equals(normalizeOrigin(desktopOrigin))) {
+            return fallback;
+        }
         boolean allowed = Arrays.stream(allowedReturnOrigins.split(","))
                 .map(this::normalizeOrigin)
                 .anyMatch(requested::equals);

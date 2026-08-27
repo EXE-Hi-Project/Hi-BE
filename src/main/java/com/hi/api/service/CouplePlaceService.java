@@ -40,14 +40,6 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
-import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
-import software.amazon.awssdk.services.s3.model.S3Exception;
-import software.amazon.awssdk.services.s3.presigner.S3Presigner;
-import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 import java.text.Normalizer;
 import java.time.Duration;
@@ -77,7 +69,6 @@ public class CouplePlaceService {
     private static final int MAX_ADDRESS_CANDIDATES = 16;
     private static final int MAX_PHOTOS_PER_PLACE = 5;
     private static final long MAX_PHOTO_BYTES = 5L * 1024L * 1024L;
-    private static final Duration PHOTO_PRESIGN_TTL = Duration.ofMinutes(10);
     private static final Set<String> ALLOWED_PHOTO_TYPES = Set.of("image/jpeg", "image/png", "image/webp");
 
     private final CouplePlaceRepository placeRepository;
@@ -89,8 +80,7 @@ public class CouplePlaceService {
     private final SequenceService sequenceService;
     private final RestTemplate restTemplate;
     private final PartnerAccessService partnerAccessService;
-    private final S3Client s3Client;
-    private final S3Presigner s3Presigner;
+    private final CloudinaryMediaService mediaService;
     private final RateLimitService rateLimitService;
     private final PendingMediaUploadService pendingMediaUploadService;
 
@@ -124,15 +114,6 @@ public class CouplePlaceService {
     @Value("${app.couple-places.photo-upload-enabled:false}")
     private boolean photoUploadEnabled;
 
-    @Value("${app.s3.user-media-bucket:}")
-    private String mediaBucket;
-
-    @Value("${app.s3.public-base-url:}")
-    private String mediaPublicBaseUrl;
-
-    @Value("${app.s3.region:${aws.region:us-east-1}}")
-    private String mediaRegion;
-
     public CouplePlaceService(CouplePlaceRepository placeRepository,
                               CouplePlaceReviewRepository reviewRepository,
                               CouplePlaceReactionRepository reactionRepository,
@@ -142,8 +123,7 @@ public class CouplePlaceService {
                               SequenceService sequenceService,
                               RestTemplate restTemplate,
                                PartnerAccessService partnerAccessService,
-                               S3Client s3Client,
-                               S3Presigner s3Presigner,
+                               CloudinaryMediaService mediaService,
                                RateLimitService rateLimitService,
                                PendingMediaUploadService pendingMediaUploadService) {
         this.placeRepository = placeRepository;
@@ -155,8 +135,7 @@ public class CouplePlaceService {
         this.sequenceService = sequenceService;
         this.restTemplate = restTemplate;
         this.partnerAccessService = partnerAccessService;
-        this.s3Client = s3Client;
-        this.s3Presigner = s3Presigner;
+        this.mediaService = mediaService;
         this.rateLimitService = rateLimitService;
         this.pendingMediaUploadService = pendingMediaUploadService;
     }
@@ -894,56 +873,47 @@ public class CouplePlaceService {
         }
         String contentType = normalizePhotoContentType(request.getContentType());
         validatePhotoLength(request.getContentLength());
-        String objectKey = "couple-places/%s/%s/%s%s".formatted(
+        String objectKey = mediaService.publicId("couple-places/%s/%s/%s".formatted(
                 placeId,
                 user.getId(),
-                UUID.randomUUID(),
-                photoExtension(contentType, request.getFileName())
-        );
-        PutObjectRequest putObjectRequest = PutObjectRequest.builder()
-                .bucket(mediaBucket)
-                .key(objectKey)
-                .contentType(contentType)
-                .contentLength(request.getContentLength())
-                .build();
-        PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
-                .signatureDuration(PHOTO_PRESIGN_TTL)
-                .putObjectRequest(putObjectRequest)
-                .build();
-        String uploadUrl = s3Presigner.presignPutObject(presignRequest).url().toString();
-        pendingMediaUploadService.register(user.getId(), mediaBucket, objectKey);
-        return Map.of(
-                "uploadUrl", uploadUrl,
-                "objectKey", objectKey,
-                "publicUrl", photoPublicUrl(objectKey),
-                "contentType", contentType,
-                "expiresInSeconds", PHOTO_PRESIGN_TTL.toSeconds()
-        );
+                UUID.randomUUID()
+        ));
+        Map<String, Object> response = new LinkedHashMap<>(mediaService.createSignedUpload(objectKey));
+        pendingMediaUploadService.register(user.getId(), CloudinaryMediaService.STORAGE_BUCKET, objectKey);
+        response.put("objectKey", objectKey);
+        response.put("contentType", contentType);
+        return response;
     }
 
     public CouplePlacePhoto confirmPhoto(User user, Long placeId, ConfirmCouplePlacePhotoRequest request) {
         getAccessiblePlace(user, placeId);
         ensurePhotoUploadEnabled();
         String objectKey = request.getObjectKey() == null ? "" : request.getObjectKey().trim();
-        String expectedPrefix = "couple-places/%s/%s/".formatted(placeId, user.getId());
+        String expectedPrefix = mediaService.publicId("couple-places/%s/%s/".formatted(placeId, user.getId()));
         if (!objectKey.startsWith(expectedPrefix)) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Ảnh không thuộc người dùng hoặc địa điểm này");
         }
         if (photoRepository.countByPlaceIdAndStatus(placeId, CouplePlaceStatus.PUBLISHED) >= MAX_PHOTOS_PER_PLACE) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Địa điểm đã có tối đa 5 ảnh");
         }
-        String contentType = verifyPhotoObject(objectKey);
+        CloudinaryMediaService.MediaAsset asset;
+        try {
+            asset = mediaService.verifiedImage(objectKey, MAX_PHOTO_BYTES, ALLOWED_PHOTO_TYPES);
+        } catch (IllegalArgumentException ex) {
+            mediaService.deleteImage(objectKey);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
+        }
         CouplePlacePhoto photo = new CouplePlacePhoto();
         photo.setId(sequenceService.next("couple_place_photos"));
         photo.setPlaceId(placeId);
         photo.setUserId(user.getId());
         photo.setUserName(user.getName());
         photo.setObjectKey(objectKey);
-        photo.setUrl(photoPublicUrl(objectKey));
-        photo.setContentType(contentType);
+        photo.setUrl(asset.secureUrl());
+        photo.setContentType(asset.contentType());
         photo.setStatus(CouplePlaceStatus.PUBLISHED);
         CouplePlacePhoto saved = photoRepository.save(photo);
-        pendingMediaUploadService.confirm(mediaBucket, objectKey);
+        pendingMediaUploadService.confirm(CloudinaryMediaService.STORAGE_BUCKET, objectKey);
         return saved;
     }
 
@@ -951,40 +921,7 @@ public class CouplePlaceService {
         if (!photoUploadEnabled) {
             throw new ResponseStatusException(HttpStatus.GONE, "Tính năng tải ảnh đang tạm tắt");
         }
-        if (mediaBucket == null || mediaBucket.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Chưa cấu hình kho ảnh địa điểm");
-        }
-    }
-
-    private String verifyPhotoObject(String objectKey) {
-        try {
-            var head = s3Client.headObject(HeadObjectRequest.builder()
-                    .bucket(mediaBucket)
-                    .key(objectKey)
-                    .build());
-            String contentType = normalizePhotoContentType(head.contentType());
-            validatePhotoLength(head.contentLength());
-            S3ImageContentValidator.verify(s3Client, mediaBucket, objectKey, contentType);
-            return contentType;
-        } catch (IllegalArgumentException ex) {
-            deleteInvalidPhotoObject(objectKey);
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
-        } catch (NoSuchKeyException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chưa tìm thấy ảnh đã tải lên");
-        } catch (S3Exception ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Không thể xác thực ảnh đã tải lên");
-        }
-    }
-
-    private void deleteInvalidPhotoObject(String objectKey) {
-        try {
-            s3Client.deleteObject(DeleteObjectRequest.builder()
-                    .bucket(mediaBucket)
-                    .key(objectKey)
-                    .build());
-        } catch (S3Exception ignored) {
-            // Cleanup is best-effort; the bucket lifecycle policy remains the final safety net.
-        }
+        mediaService.ensureConfigured();
     }
 
     private String normalizePhotoContentType(String contentType) {
@@ -1001,31 +938,6 @@ public class CouplePlaceService {
         }
     }
 
-    private String photoPublicUrl(String objectKey) {
-        String base = mediaPublicBaseUrl == null ? "" : mediaPublicBaseUrl.trim();
-        if (!base.isBlank()) {
-            return base.replaceAll("/+$", "") + "/" + objectKey;
-        }
-        if (mediaBucket.contains(".")) {
-            return "https://s3.%s.amazonaws.com/%s/%s".formatted(mediaRegion, mediaBucket, objectKey);
-        }
-        if ("us-east-1".equals(mediaRegion)) {
-            return "https://%s.s3.amazonaws.com/%s".formatted(mediaBucket, objectKey);
-        }
-        return "https://%s.s3.%s.amazonaws.com/%s".formatted(mediaBucket, mediaRegion, objectKey);
-    }
-
-    private String photoExtension(String contentType, String fileName) {
-        String cleaned = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
-        if (cleaned.endsWith(".jpg") || cleaned.endsWith(".jpeg")) return ".jpg";
-        if (cleaned.endsWith(".png")) return ".png";
-        if (cleaned.endsWith(".webp")) return ".webp";
-        return switch (contentType) {
-            case "image/png" -> ".png";
-            case "image/webp" -> ".webp";
-            default -> ".jpg";
-        };
-    }
 
     public List<AdminCouplePlaceResponse> adminPlaces() {
         List<CouplePlace> places = placeRepository.findByStatusIn(List.of(CouplePlaceStatus.PUBLISHED, CouplePlaceStatus.HIDDEN, CouplePlaceStatus.ARCHIVED));

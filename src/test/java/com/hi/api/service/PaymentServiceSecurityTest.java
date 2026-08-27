@@ -70,6 +70,16 @@ class PaymentServiceSecurityTest {
     }
 
     @Test
+    void desktopCheckoutAlwaysReturnsToHttpsWebsite() {
+        PaymentService service = service();
+
+        assertEquals(
+                "https://hilover.space",
+                ReflectionTestUtils.invokeMethod(service, "resolveReturnBaseUrl", "hi-app://renderer")
+        );
+    }
+
+    @Test
     void zeroAmountSaleActivatesSubscriptionWithoutPayos() throws Exception {
         UserRepository userRepository = mock(UserRepository.class);
         TransactionRepository transactionRepository = mock(TransactionRepository.class);
@@ -180,6 +190,7 @@ class PaymentServiceSecurityTest {
                 "allowedReturnOrigins",
                 "https://hilover.space,https://www.hilover.space"
         );
+        ReflectionTestUtils.setField(service, "desktopOrigin", "hi-app://renderer");
         return service;
     }
 }
