@@ -55,6 +55,9 @@ public class SecurityConfig {
     @Value("${app.swagger.public:false}")
     private boolean swaggerPublic;
 
+    @Value("${app.jwt.secret}")
+    private String jwtSecret;
+
     private final JwtUtil jwtUtil;
     private final UserRepository userRepository;
 
@@ -77,7 +80,7 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http, MaintenanceFilter maintenanceFilter) throws Exception {
         http
             .csrf(csrf -> csrf
-                .csrfTokenRepository(new HeaderCsrfTokenRepository())
+                .csrfTokenRepository(new HeaderCsrfTokenRepository(jwtSecret))
                 .ignoringRequestMatchers(
                         nativeMobileRequest(),
                         new AntPathRequestMatcher("/api/analytics/track", "POST"),

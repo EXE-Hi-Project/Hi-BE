@@ -6,15 +6,16 @@ import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.security.web.csrf.CsrfTokenRepository;
 import org.springframework.security.web.csrf.DefaultCsrfToken;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Base64;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Keeps CSRF tokens server-side so Vercel rewrites do not depend on forwarding
+ * Signs short-lived CSRF tokens so Vercel rewrites do not depend on forwarding
  * the browser's Cookie header to the upstream Render service.
  */
 public final class HeaderCsrfTokenRepository implements CsrfTokenRepository {
@@ -22,28 +23,31 @@ public final class HeaderCsrfTokenRepository implements CsrfTokenRepository {
     public static final String HEADER_NAME = "X-XSRF-TOKEN";
     private static final String PARAMETER_NAME = "_csrf";
     private static final Duration TOKEN_TTL = Duration.ofMinutes(15);
-    private static final int MAX_ACTIVE_TOKENS = 10_000;
-
     private final SecureRandom secureRandom = new SecureRandom();
-    private final Map<String, Instant> tokenExpirations = new ConcurrentHashMap<>();
+    private final byte[] signingKey;
+
+    public HeaderCsrfTokenRepository(String signingSecret) {
+        if (signingSecret == null || signingSecret.isBlank()) {
+            throw new IllegalArgumentException("CSRF signing secret must not be blank");
+        }
+        this.signingKey = signingSecret.getBytes(StandardCharsets.UTF_8);
+    }
 
     @Override
     public CsrfToken generateToken(HttpServletRequest request) {
-        cleanupExpiredTokens();
         byte[] bytes = new byte[32];
         secureRandom.nextBytes(bytes);
+        String payload = System.currentTimeMillis() + ":"
+                + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        String encodedPayload = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(payload.getBytes(StandardCharsets.UTF_8));
         return new DefaultCsrfToken(HEADER_NAME, PARAMETER_NAME,
-                Base64.getUrlEncoder().withoutPadding().encodeToString(bytes));
+                encodedPayload + "." + encode(sign(encodedPayload)));
     }
 
     @Override
     public void saveToken(CsrfToken token, HttpServletRequest request, HttpServletResponse response) {
-        if (token == null) return;
-        cleanupExpiredTokens();
-        if (tokenExpirations.size() >= MAX_ACTIVE_TOKENS) {
-            tokenExpirations.clear();
-        }
-        tokenExpirations.put(token.getToken(), Instant.now().plus(TOKEN_TTL));
+        // The token is self-contained and signed, so there is no server-side state to save.
     }
 
     @Override
@@ -51,16 +55,44 @@ public final class HeaderCsrfTokenRepository implements CsrfTokenRepository {
         String token = request.getHeader(HEADER_NAME);
         if (token == null || token.isBlank()) return null;
 
-        Instant expiresAt = tokenExpirations.get(token);
-        if (expiresAt == null || !expiresAt.isAfter(Instant.now())) {
-            tokenExpirations.remove(token);
-            return null;
-        }
-        return new DefaultCsrfToken(HEADER_NAME, PARAMETER_NAME, token);
+        return isValid(token) ? new DefaultCsrfToken(HEADER_NAME, PARAMETER_NAME, token) : null;
     }
 
-    private void cleanupExpiredTokens() {
-        Instant now = Instant.now();
-        tokenExpirations.entrySet().removeIf(entry -> !entry.getValue().isAfter(now));
+    private boolean isValid(String token) {
+        String[] parts = token.split("\\.");
+        if (parts.length != 2 || !MessageDigest.isEqual(sign(parts[0]), decode(parts[1]))) return false;
+        try {
+            String payload = new String(decode(parts[0]), StandardCharsets.UTF_8);
+            int separator = payload.indexOf(':');
+            if (separator <= 0 || separator == payload.length() - 1) return false;
+            long issuedAt = Long.parseLong(payload.substring(0, separator));
+            long now = System.currentTimeMillis();
+            return issuedAt <= now + Duration.ofMinutes(1).toMillis()
+                    && issuedAt >= now - TOKEN_TTL.toMillis();
+        } catch (IllegalArgumentException ignored) {
+            return false;
+        }
+    }
+
+    private byte[] sign(String value) {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(signingKey, "HmacSHA256"));
+            return mac.doFinal(value.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception exception) {
+            throw new IllegalStateException("Unable to sign CSRF token", exception);
+        }
+    }
+
+    private byte[] decode(String value) {
+        try {
+            return Base64.getUrlDecoder().decode(value);
+        } catch (IllegalArgumentException ignored) {
+            return new byte[0];
+        }
+    }
+
+    private String encode(byte[] value) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(value);
     }
 }
