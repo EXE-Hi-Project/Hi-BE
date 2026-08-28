@@ -52,9 +52,10 @@ public final class HeaderCsrfTokenRepository implements CsrfTokenRepository {
 
     @Override
     public CsrfToken loadToken(HttpServletRequest request) {
-        String token = request.getHeader(HEADER_NAME);
-        if (token == null || token.isBlank()) return null;
+        String requestToken = request.getHeader(HEADER_NAME);
+        if (requestToken == null || requestToken.isBlank()) return null;
 
+        String token = isValid(requestToken) ? requestToken : unmask(requestToken);
         return isValid(token) ? new DefaultCsrfToken(HEADER_NAME, PARAMETER_NAME, token) : null;
     }
 
@@ -90,6 +91,23 @@ public final class HeaderCsrfTokenRepository implements CsrfTokenRepository {
         } catch (IllegalArgumentException ignored) {
             return new byte[0];
         }
+    }
+
+    /**
+     * Spring Security's default request handler masks the emitted token to
+     * mitigate BREACH. The request carries that masked value, while this
+     * stateless repository must load the original signed value first.
+     */
+    private String unmask(String value) {
+        byte[] masked = decode(value);
+        if (masked.length == 0 || masked.length % 2 != 0) return "";
+
+        int tokenLength = masked.length / 2;
+        byte[] token = new byte[tokenLength];
+        for (int index = 0; index < tokenLength; index++) {
+            token[index] = (byte) (masked[tokenLength + index] ^ masked[index]);
+        }
+        return new String(token, StandardCharsets.UTF_8);
     }
 
     private String encode(byte[] value) {
