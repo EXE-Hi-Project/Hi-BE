@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node scripts/run-maven.cjs spring-boot:run",
     "test": "node scripts/run-maven.cjs test",
-    "build": "node scripts/run-maven.cjs clean package -DskipTests"
+    "build": "node scripts/run-maven.cjs clean package -DskipTests",
+    "start": "java -jar target/hi-api-1.0.0.jar"
   }
 }
