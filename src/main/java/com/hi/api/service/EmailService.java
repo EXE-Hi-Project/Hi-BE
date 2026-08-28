@@ -1,14 +1,8 @@
 package com.hi.api.service;
 
-import jakarta.mail.internet.MimeMessage;
 import com.hi.api.model.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.MailException;
-import org.springframework.mail.MailSendException;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -20,14 +14,9 @@ public class EmailService {
 
     private static final Logger log = LoggerFactory.getLogger(EmailService.class);
 
-    private final JavaMailSender mailSender;
     private final ResendOtpEmailService resendOtpEmailService;
 
-    @Value("${spring.mail.username}")
-    private String fromEmail;
-
-    public EmailService(JavaMailSender mailSender, ResendOtpEmailService resendOtpEmailService) {
-        this.mailSender = mailSender;
+    public EmailService(ResendOtpEmailService resendOtpEmailService) {
         this.resendOtpEmailService = resendOtpEmailService;
     }
 
@@ -380,7 +369,7 @@ public class EmailService {
                     "Thương mến từ Hi Lover,"
             );
             sendRequiredEmail(to, subject, html, true);
-        } catch (MailException ex) {
+        } catch (Exception ex) {
             log.warn("[EMAIL] Không gửi được email tùy chọn tới {}: {}", to, ex.getMessage());
         }
     }
@@ -388,25 +377,11 @@ public class EmailService {
     private void sendRequiredEmail(String to, String subject, String body, boolean isHtml) {
         log.info("[EMAIL] Chuẩn bị gửi email đến: {}", to);
         try {
-            MimeMessage message = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
-            String senderName = "Hi Lover App";
-            if (fromEmail != null && !fromEmail.isBlank()) {
-                helper.setFrom(fromEmail, senderName);
-            } else {
-                helper.setFrom("hilover.space@gmail.com", senderName);
-            }
-
-            helper.setTo(to);
-            helper.setSubject(subject);
-            helper.setText(body, isHtml);
-
-            mailSender.send(message);
-            log.info("[EMAIL] Gửi email thành công đến: {}", to);
+            String providerMessageId = resendOtpEmailService.sendTransactional(to, subject, body);
+            log.info("[EMAIL] Resend accepted email to {}: {}", to, providerMessageId);
         } catch (Exception ex) {
             log.error("[EMAIL] Gửi email thất bại đến {}: {}", to, ex.getMessage(), ex);
-            throw new MailSendException("Gửi email thất bại: " + ex.getMessage(), ex);
+            throw new IllegalStateException("Gửi email thất bại", ex);
         }
     }
 
