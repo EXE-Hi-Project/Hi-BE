@@ -8,10 +8,12 @@ import org.springframework.http.HttpEntity;
 import org.springframework.web.client.RestTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ResendOtpEmailServiceTest {
@@ -47,6 +49,21 @@ class ResendOtpEmailServiceTest {
         assertThrows(IllegalStateException.class, () -> service.send(user(), "ACTIVATION", "Subject", "<p>OTP</p>"));
 
         verify(deliveries).markFailed(delivery);
+    }
+
+    @Test
+    void transactionalSendUsesResendWithoutCreatingAnOtpDelivery() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        OtpDeliveryService deliveries = mock(OtpDeliveryService.class);
+        when(restTemplate.postForObject(any(String.class), any(HttpEntity.class), eq(String.class)))
+                .thenReturn("{\"id\":\"resend-reminder-1\"}");
+        ResendOtpEmailService service = new ResendOtpEmailService(restTemplate, new ObjectMapper(), deliveries,
+                "re_test", "Hi Lover <no-reply@hilover.space>");
+
+        String providerId = service.sendTransactional("user@example.com", "Reminder", "<p>Hi</p>");
+
+        assertEquals("resend-reminder-1", providerId);
+        verifyNoInteractions(deliveries);
     }
 
     private User user() {

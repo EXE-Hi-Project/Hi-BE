@@ -45,24 +45,11 @@ public class ResendOtpEmailService {
 
         OtpDelivery delivery = deliveryService.begin(user.getId(), purpose);
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setBearerAuth(apiKey);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("Idempotency-Key", "otp/" + delivery.getDeliveryId());
-            Map<String, Object> payload = Map.of(
-                    "from", fromEmail,
-                    "to", List.of(user.getEmail()),
-                    "subject", subject,
-                    "html", html,
-                    "tags", List.of(
+            String providerMessageId = sendEmail(user.getEmail(), subject, html,
+                    "otp/" + delivery.getDeliveryId(), List.of(
                             Map.of("name", "hi_delivery_id", "value", delivery.getDeliveryId()),
                             Map.of("name", "hi_purpose", "value", purpose)
-                    )
-            );
-            String response = restTemplate.postForObject(RESEND_EMAILS_URL, new HttpEntity<>(payload, headers), String.class);
-            JsonNode responseJson = objectMapper.readTree(response == null ? "{}" : response);
-            String providerMessageId = responseJson.path("id").asText();
-            if (providerMessageId.isBlank()) throw new IllegalStateException("Resend did not return an email ID");
+                    ));
             deliveryService.markSent(delivery, providerMessageId);
             log.info("[OTP-RESEND:{}] accepted purpose={}", delivery.getDeliveryId(), purpose);
         } catch (Exception exception) {
@@ -70,5 +57,43 @@ public class ResendOtpEmailService {
             log.error("[OTP-RESEND:{}] send failed purpose={}", delivery.getDeliveryId(), purpose, exception);
             throw new IllegalStateException("Resend OTP delivery failed", exception);
         }
+    }
+
+    /**
+     * Sends non-OTP transactional email through Resend's HTTPS API. Render
+     * cannot reliably reach Gmail's SMTP port, so reminders must use the same
+     * provider and transport as OTP delivery.
+     */
+    public String sendTransactional(String to, String subject, String html) {
+        try {
+            return sendEmail(to, subject, html, null,
+                    List.of(Map.of("name", "hi_purpose", "value", "TRANSACTIONAL")));
+        } catch (Exception exception) {
+            throw new IllegalStateException("Transactional email delivery failed", exception);
+        }
+    }
+
+    private String sendEmail(String to, String subject, String html, String idempotencyKey,
+                             List<Map<String, String>> tags) throws Exception {
+        if (apiKey == null || apiKey.isBlank() || fromEmail == null || fromEmail.isBlank()) {
+            throw new IllegalStateException("Resend email delivery is not configured");
+        }
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(apiKey);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (idempotencyKey != null) headers.set("Idempotency-Key", idempotencyKey);
+        Map<String, Object> payload = Map.of(
+                "from", fromEmail,
+                "to", List.of(to),
+                "subject", subject,
+                "html", html,
+                "tags", tags
+        );
+        String response = restTemplate.postForObject(RESEND_EMAILS_URL, new HttpEntity<>(payload, headers), String.class);
+        JsonNode responseJson = objectMapper.readTree(response == null ? "{}" : response);
+        String providerMessageId = responseJson.path("id").asText();
+        if (providerMessageId.isBlank()) throw new IllegalStateException("Resend did not return an email ID");
+        return providerMessageId;
     }
 }
