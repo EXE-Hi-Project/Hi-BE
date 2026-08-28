@@ -3,6 +3,7 @@ package com.hi.api.config;
 import com.hi.api.repository.UserRepository;
 import com.hi.api.security.JwtAuthFilter;
 import com.hi.api.security.JwtUtil;
+import com.hi.api.security.HeaderCsrfTokenRepository;
 import com.hi.api.security.MaintenanceFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,7 +21,6 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 import org.springframework.security.web.header.writers.StaticHeadersWriter;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
@@ -77,7 +77,7 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http, MaintenanceFilter maintenanceFilter) throws Exception {
         http
             .csrf(csrf -> csrf
-                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
+                .csrfTokenRepository(new HeaderCsrfTokenRepository())
                 .ignoringRequestMatchers(
                         nativeMobileRequest(),
                         new AntPathRequestMatcher("/api/analytics/track", "POST"),
