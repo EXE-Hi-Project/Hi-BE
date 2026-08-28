@@ -12,7 +12,7 @@ class HeaderCsrfTokenRepositoryTest {
 
     @Test
     void returnsOnlyTokensIssuedByTheServer() {
-        HeaderCsrfTokenRepository repository = new HeaderCsrfTokenRepository();
+        HeaderCsrfTokenRepository repository = new HeaderCsrfTokenRepository("test-signing-secret");
         MockHttpServletRequest issueRequest = new MockHttpServletRequest("GET", "/api/auth/csrf");
         CsrfToken issued = repository.generateToken(issueRequest);
         repository.saveToken(issued, issueRequest, new MockHttpServletResponse());
@@ -20,7 +20,7 @@ class HeaderCsrfTokenRepositoryTest {
         MockHttpServletRequest validRequest = new MockHttpServletRequest("POST", "/api/auth/google");
         validRequest.addHeader(HeaderCsrfTokenRepository.HEADER_NAME, issued.getToken());
 
-        CsrfToken loaded = repository.loadToken(validRequest);
+        CsrfToken loaded = new HeaderCsrfTokenRepository("test-signing-secret").loadToken(validRequest);
         assertEquals(issued.getToken(), loaded.getToken());
         assertEquals(HeaderCsrfTokenRepository.HEADER_NAME, loaded.getHeaderName());
 
